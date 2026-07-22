@@ -1,0 +1,15 @@
+<RCC>
+    <qresource prefix="/qml">
+        <file alias="Main.qml">qml/Main.qml</file>
+        <file alias="Splash.qml">qml/Splash.qml</file>
+        <file alias="Shell.qml">qml/Shell.qml</file>
+        <file alias="NavItem.qml">qml/NavItem.qml</file>
+        <file alias="HomeScreen.qml">qml/HomeScreen.qml</file>
+        <file alias="MovieCard.qml">qml/MovieCard.qml</file>
+        <file alias="SearchScreen.qml">qml/SearchScreen.qml</file>
+        <file alias="DownloadsScreen.qml">qml/DownloadsScreen.qml</file>
+        <file alias="PlayerScreen.qml">qml/PlayerScreen.qml</file>
+        <file alias="SourcesScreen.qml">qml/SourcesScreen.qml</file>
+        <file alias="SettingsScreen.qml">qml/SettingsScreen.qml</file>
+    </qresource>
+</RCC>

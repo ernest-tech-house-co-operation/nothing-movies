@@ -1,0 +1,29 @@
+cmake_minimum_required(VERSION 3.20)
+project(NothingMovies CXX)
+
+# We have what? Everything.
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Quick Qml)
+find_package(CURL REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(libzip REQUIRED)
+
+add_subdirectory(core)
+add_subdirectory(player)
+add_subdirectory(torrent_service)
+add_subdirectory(downloader)
+add_subdirectory(metadata_cache)
+add_subdirectory(search_aggregator)
+add_subdirectory(queue_manager)
+add_subdirectory(movie_source1)
+add_subdirectory(movie_source2)
+add_subdirectory(scraper_core)
+add_subdirectory(vendor_updater)
+add_subdirectory(ui)
+add_subdirectory(app)

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: mailto:ernesttechhouse@gmail.com
+    about: Please report security issues privately by email — see SECURITY.md. Do not open a public issue.
+  - name: General Question / Discussion
+    url: https://github.com/BunElysiaReact/nothingmovies/discussions
+    about: Ask questions or discuss ideas before filing an issue.

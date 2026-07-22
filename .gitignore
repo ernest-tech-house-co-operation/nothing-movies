@@ -1,0 +1,8 @@
+build/
+vendor/nothing-browser/
+vendor/nothing-browser_staging/
+vendor/nothing-browser_prev/
+*.o
+compile_commands.json
+*.key
+.env
