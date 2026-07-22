@@ -15,6 +15,7 @@ find_package(nlohmann_json REQUIRED)
 find_package(libzip REQUIRED)
 
 add_subdirectory(core)
+add_subdirectory(tmdb_client)
 add_subdirectory(player)
 add_subdirectory(torrent_service)
 add_subdirectory(downloader)
