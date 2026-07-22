@@ -1,0 +1,48 @@
+name: Release (Beta)
+
+on:
+  push:
+    branches: [ beta ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            qt6-base-dev qt6-declarative-dev qml6-module-qtquick-controls \
+            qml6-module-qtquick-templates qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-layouts \
+            libcurl4-openssl-dev \
+            nlohmann-json3-dev \
+            libzip-dev zipcmp zipmerge ziptool \
+            libtorrent-rasterbar-dev \
+            libmpv-dev \
+            libssl-dev \
+            libboost-all-dev
+
+      - name: Configure
+        run: >
+          cmake -B build -GNinja
+          -DTMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/app/nothingmovies dist/nothingmovies-v0.0.1-beta-linux
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.0.1-beta-${{ github.sha }}
+          name: v0.0.1-beta
+          prerelease: true
+          files: dist/*
