@@ -3,6 +3,7 @@
 #include "downloader/downloader.h"
 
 #include <filesystem>
+#include <cstdlib>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -58,13 +59,28 @@ std::string sanitizeFilename(const std::string& title) {
     return out.empty() ? "download" : out;
 }
 
+// The old default ("./downloads/nothingmoviesdownloads") was relative to
+// whatever directory the binary happened to be launched from -- run it from
+// a different shell, a desktop launcher, or a different build dir and your
+// downloads silently "moved." Anchor it to the user's home directory
+// instead so it's always the same, findable place.
+std::string defaultDownloadFolder() {
+    const char* home = std::getenv("HOME");
+    if (home && *home) {
+        return std::string(home) + "/NothingMovies/Downloads";
+    }
+    // No HOME set (unusual, but be defensive) -- fall back to the old
+    // relative behavior rather than crashing.
+    return "./downloads/nothingmoviesdownloads";
+}
+
 } // namespace
 
 struct Queue_managerModule::Impl {
     torrent_service::Torrent_serviceModule torrentService;
     downloader::DownloaderModule downloaderService;
 
-    std::string downloadFolder = "./downloads/nothingmoviesdownloads";
+    std::string downloadFolder = defaultDownloadFolder();
 
     struct Meta {
         QueueItemType type;
@@ -133,11 +149,13 @@ QueueItem Queue_managerModule::getItem(const std::string& id) const {
         out.state = mapTorrentState(status.state);
         out.progress = status.progress;
         out.filePath = status.filePath;
+        out.readyToPlay = status.readyToPlay;
     } else {
         auto status = impl_->downloaderService.getStatus(id);
         out.state = mapDownloadState(status.state);
         out.progress = status.progress;
         out.filePath = status.destPath;
+        out.readyToPlay = !status.destPath.empty();
     }
 
     return out;

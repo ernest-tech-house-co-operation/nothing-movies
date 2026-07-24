@@ -152,6 +152,9 @@ std::vector<TmdbListItem> TmdbClient::fetchList(const std::string& endpoint) con
             std::string posterPath = r.value("poster_path", "");
             item.posterUrl = posterPath.empty() ? "" : "https://image.tmdb.org/t/p/w500" + posterPath;
 
+            std::string backdropPath = r.value("backdrop_path", "");
+            item.backdropUrl = backdropPath.empty() ? "" : "https://image.tmdb.org/t/p/w1280" + backdropPath;
+
             std::string dateStr = r.value("release_date", "");
             if (dateStr.size() >= 4) {
                 try { item.year = std::stoi(dateStr.substr(0, 4)); } catch (...) {}

@@ -19,6 +19,7 @@ struct TmdbListItem {
     int tmdbId = 0;
     std::string title;
     std::string posterUrl;
+    std::string backdropUrl;
     int year = 0;
 };
 

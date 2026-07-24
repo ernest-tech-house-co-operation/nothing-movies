@@ -6,10 +6,12 @@
         <file alias="NavItem.qml">qml/NavItem.qml</file>
         <file alias="HomeScreen.qml">qml/HomeScreen.qml</file>
         <file alias="MovieCard.qml">qml/MovieCard.qml</file>
+        <file alias="MovieListItem.qml">qml/MovieListItem.qml</file>
         <file alias="SearchScreen.qml">qml/SearchScreen.qml</file>
+        <file alias="InfoScreen.qml">qml/InfoScreen.qml</file>
         <file alias="DownloadsScreen.qml">qml/DownloadsScreen.qml</file>
-        <file alias="PlayerScreen.qml">qml/PlayerScreen.qml</file>
         <file alias="SourcesScreen.qml">qml/SourcesScreen.qml</file>
+        <file alias="ThanksScreen.qml">qml/ThanksScreen.qml</file>
         <file alias="SettingsScreen.qml">qml/SettingsScreen.qml</file>
     </qresource>
 </RCC>

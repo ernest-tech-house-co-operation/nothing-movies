@@ -4,8 +4,9 @@
 namespace search_aggregator {
 
 void SearchAggregatorModule::registerSource(const std::string& name,
-                                             std::shared_ptr<core::ISourceProvider> provider) {
-    sources_.push_back(SourceEntry{name, std::move(provider), true});
+                                             std::shared_ptr<core::ISourceProvider> provider,
+                                             bool loadImages) {
+    sources_.push_back(SourceEntry{name, std::move(provider), true, loadImages});
 }
 
 void SearchAggregatorModule::setSourceEnabled(const std::string& name, bool enabled) {
@@ -22,6 +23,22 @@ bool SearchAggregatorModule::isSourceEnabled(const std::string& name) const {
         if (entry.name == name) return entry.enabled;
     }
     return false;
+}
+
+void SearchAggregatorModule::setSourceImages(const std::string& name, bool loadImages) {
+    for (auto& entry : sources_) {
+        if (entry.name == name) {
+            entry.loadImages = loadImages;
+            return;
+        }
+    }
+}
+
+bool SearchAggregatorModule::isSourceImagesEnabled(const std::string& name) const {
+    for (const auto& entry : sources_) {
+        if (entry.name == name) return entry.loadImages;
+    }
+    return true; // unknown source -- default to the safe/full-featured path
 }
 
 std::vector<std::string> SearchAggregatorModule::listSourceNames() const {

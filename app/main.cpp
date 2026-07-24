@@ -5,11 +5,19 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include "ui/MainWindow.h"
 #include "ui/TmdbBridge.h"
+#include "ui/SearchBridge.h"
+#include "ui/AppController.h"
+#include "ui/QueueBridge.h"
 #include "vendor_updater/VendorUpdater.h"
+#include "search_aggregator/search_aggregator.h"
+#include "queue_manager/queue_manager.h"
+#include "movie_source1/movie_source1.h"
+// #include "movie_source2/movie_source2.h"  // paste movie_source2.h contents and I'll fill the line below in
 
 namespace {
 
@@ -95,6 +103,28 @@ std::string resolveTmdbApiKey() {
     return {};
 }
 
+// ---------------------------------------------------------------------
+// Movie source registration.
+//
+// To add a new source:
+//   1. #include "movie_sourceN/movie_sourceN.h" up top
+//   2. add ONE line below:
+//        aggregator->registerSource("Display Name", std::make_shared<ns::YourProvider>());
+// That's it -- SearchAggregatorModule and SearchBridge handle the rest.
+//
+// Pass loadImages=false as a 3rd arg for a source you want to show as a
+// fast, poster-free list (skips TMDB matching entirely for its results):
+//   aggregator->registerSource("Some Source", std::make_shared<ns::Provider>(), /*loadImages=*/false);
+// ---------------------------------------------------------------------
+std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator() {
+    auto aggregator = std::make_shared<search_aggregator::SearchAggregatorModule>();
+
+    aggregator->registerSource("Apibay (Torrent)", std::make_shared<movie_source1::ApibayProvider>());
+    // aggregator->registerSource("<name>", std::make_shared<movie_source2::???Provider>());
+
+    return aggregator;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -125,12 +155,21 @@ int main(int argc, char* argv[]) {
     const std::string tmdbApiKey = resolveTmdbApiKey();
     if (tmdbApiKey.empty()) {
         std::cerr << "[env] warning: TMDB_API_KEY not found (.env or process env) — "
-                      "Trending/Upcoming carousels will fail to load\n";
+                      "Trending/Upcoming carousels and search matching will fail to load\n";
     }
 
     ui::TmdbBridge tmdbBridge(tmdbApiKey);
 
-    ui::MainWindow window(&tmdbBridge);
+    auto aggregator = buildSourceAggregator();
+    ui::SearchBridge searchBridge(tmdbApiKey, aggregator);
+
+    auto queueManager = std::make_shared<queue_manager::Queue_managerModule>();
+    queueManager->init();
+
+    ui::AppController appController;
+    ui::QueueBridge queueBridge(queueManager);
+
+    ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager);
     window.show();
     return app.exec();
 }

@@ -25,6 +25,8 @@ struct QueueItem {
     QueueItemState state = QueueItemState::Pending;
     double progress = 0.0;      // 0.0 - 1.0
     std::string filePath;       // where the finished/in-progress file lives
+    bool readyToPlay = false;   // torrents: enough buffered near the front to open in a player.
+                                 // Always true for HttpDownload once filePath is set.
 };
 
 // The single place that owns "where do downloads go" and routes each item

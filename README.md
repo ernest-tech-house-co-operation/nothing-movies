@@ -19,6 +19,41 @@ capture — we don't fork or modify it, we just consume its releases.
 Built and maintained with **Ernest Tech House** as main sponsor, hosting this
 project under their GitHub organization.
 
+## Status
+
+Development is going better than expected. The player backend just had a
+full rewrite: video used to be embedded via mpv's `wid` option, a raw native
+window glued into the Qt layout that had to be manually fought for
+compositing, overlays, and stacking order. It now renders through libmpv's
+render API straight into an OpenGL FBO owned by a normal `QWidget` — the
+same "video as a texture in your own draw pipeline" approach VLC's Qt
+frontend uses. That one change already unblocks proper overlay controls,
+in-app picture-in-picture, and reliable page switching with no native-window
+workarounds needed.
+
+Downloads screen now reflects what's actually sitting in the download folder
+instead of only in-memory session state, so finished downloads survive an
+app restart. Credits page is live.
+
+UI is still rough — functionality first, styling later. Screenshots below
+are straight from the dev build, warts and all.
+
+## Screenshots
+
+<p align="center">
+  <img src="images/1.png" width="260" />
+  <img src="images/2.png" width="260" />
+  <img src="images/3.png" width="260" />
+</p>
+<p align="center">
+  <img src="images/4.png" width="260" />
+  <img src="images/5.png" width="260" />
+  <img src="images/6.png" width="260" />
+</p>
+<p align="center">
+  <img src="images/8.png" width="260" />
+</p>
+
 ## Architecture
 
 Every component is an isolated module — no module reaches into another's
@@ -27,7 +62,7 @@ internals. Communication only happens through clean interface headers.
 | Module | Responsibility |
 |---|---|
 | `core` | Shared interfaces (`ISourceProvider`, etc.) |
-| `player` | libmpv-based video playback |
+| `player` | libmpv-based video playback, render-API texture rendering (no native window embedding) |
 | `torrent_service` | libtorrent-rasterbar, sequential streaming — the primary, reserved source (slot 1) |
 | `downloader` | Generic HTTP/file downloads |
 | `metadata_cache` | SQLite: posters, resume position, watch history |
@@ -61,8 +96,9 @@ cmake .. -GNinja
 ninja
 ```
 
-Requires Qt6, libmpv, libtorrent-rasterbar, curl, nlohmann-json, miniz. See
-`CMakeLists.txt` in each module for exact dependency targets.
+Requires Qt6 (Widgets, OpenGLWidgets, Quick, Qml), libmpv, libtorrent-rasterbar,
+curl, nlohmann-json, miniz. See `CMakeLists.txt` in each module for exact
+dependency targets.
 
 ## Versioning
 
@@ -74,11 +110,6 @@ Your current build version is always visible in **in-app Settings.**
 
 Always check Settings and include your exact version string when reporting
 a bug — see [`SECURITY.md`](./SECURITY.md) and issue templates.
-
-## Status
-
-Early, active development. UI, sources, and torrent integration are all
-work in progress. Expect breaking changes, especially on beta builds.
 
 ---
 
@@ -121,4 +152,4 @@ are additionally governed by
 
 ## Read this before you build against it
 
-See [`WARNING.md`](./WARNING.md).# nothing-movies
+See [`WARNING.md`](./WARNING.md).
