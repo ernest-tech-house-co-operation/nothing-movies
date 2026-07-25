@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/TmdbBridge.h"
 #include "ui/SearchBridge.h"
+#include "ui/HomepageBridge.h"   // NEW
 #include "ui/AppController.h"
 #include "ui/PlayerPageWidget.h"
 #include "ui/QueueBridge.h"
@@ -22,8 +23,10 @@ namespace ui {
 
 MainWindow::MainWindow(TmdbBridge* tmdbBridge, SearchBridge* searchBridge, AppController* appController,
                         QueueBridge* queueBridge,
-                        std::shared_ptr<queue_manager::Queue_managerModule> queueManager, QWidget* parent)
-    : QMainWindow(parent) {
+                        std::shared_ptr<queue_manager::Queue_managerModule> queueManager,
+                        HomepageBridge* homepageBridge,   // NEW parameter
+                        QWidget* parent)
+    : QMainWindow(parent), homepageBridge_(homepageBridge) {
     initUiResources();
 
     setWindowTitle("Nothing Movies");
@@ -36,6 +39,7 @@ MainWindow::MainWindow(TmdbBridge* tmdbBridge, SearchBridge* searchBridge, AppCo
     quickView_->rootContext()->setContextProperty("searchBridge", searchBridge);
     quickView_->rootContext()->setContextProperty("appController", appController);
     quickView_->rootContext()->setContextProperty("queueBridge", queueBridge);
+    quickView_->rootContext()->setContextProperty("homepageBridge", homepageBridge);   // NEW
     quickView_->setSource(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
 
     QWidget* qmlContainer = QWidget::createWindowContainer(quickView_, this);
@@ -64,25 +68,10 @@ MainWindow::MainWindow(TmdbBridge* tmdbBridge, SearchBridge* searchBridge, AppCo
     connect(playerPage_, &PlayerPageWidget::backRequested, this, [this]() {
         switchToShell();
     });
-    connect(playerPage_, &PlayerPageWidget::pipActiveChanged, this, [this](bool active) {
-        // Entering PiP: drop back to the normal app so the user can browse
-        // while the floating mini player keeps playing. Exiting: bring the
-        // full player page back into view. The PiP overlay itself lives
-        // outside stack_ (see PlayerPageWidget::enterPip), so it stays on
-        // screen through either switch.
-        if (active) {
-            switchToShell();
-        } else {
-            switchToPlayer();
-        }
-    });
+
 }
 
 void MainWindow::switchToShell() {
-    // videoWidget_ is a normal QWidget now (not a foreign native window),
-    // so QStackedWidget's own paging is enough -- no manual raise/lower of
-    // a separate native surface required, and nothing to leak through
-    // visually between pages.
     stack_->setCurrentIndex(0);
 }
 

@@ -11,12 +11,14 @@
 #include "ui/MainWindow.h"
 #include "ui/TmdbBridge.h"
 #include "ui/SearchBridge.h"
+#include "ui/HomepageBridge.h"   // NEW
 #include "ui/AppController.h"
 #include "ui/QueueBridge.h"
 #include "vendor_updater/VendorUpdater.h"
 #include "search_aggregator/search_aggregator.h"
 #include "queue_manager/queue_manager.h"
 #include "movie_source1/movie_source1.h"
+#include "movie_source3/movie_source3.h"
 // #include "movie_source2/movie_source2.h"  // paste movie_source2.h contents and I'll fill the line below in
 
 namespace {
@@ -121,6 +123,7 @@ std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator
 
     aggregator->registerSource("Apibay (Torrent)", std::make_shared<movie_source1::ApibayProvider>());
     // aggregator->registerSource("<name>", std::make_shared<movie_source2::???Provider>());
+    aggregator->registerSource("MockSource3", std::make_shared<movie_source3::MockSourceProvider>());
 
     return aggregator;
 }
@@ -163,13 +166,17 @@ int main(int argc, char* argv[]) {
     auto aggregator = buildSourceAggregator();
     ui::SearchBridge searchBridge(tmdbApiKey, aggregator);
 
+    // NEW: Create HomepageBridge
+    ui::HomepageBridge homepageBridge(aggregator, &tmdbBridge);
+
     auto queueManager = std::make_shared<queue_manager::Queue_managerModule>();
     queueManager->init();
 
     ui::AppController appController;
     ui::QueueBridge queueBridge(queueManager);
 
-    ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager);
+    // Pass homepageBridge to MainWindow
+    ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager, &homepageBridge);
     window.show();
     return app.exec();
 }

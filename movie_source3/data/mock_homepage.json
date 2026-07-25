@@ -1,0 +1,5 @@
+[
+  { "id": "m1", "title": "Fake Movie With Poster", "imageUrl": "https://picsum.photos/300/450", "category": "Trending", "trailerLink": "", "genre": "Action", "rating": 7.5 },
+  { "id": "m2", "title": "Fake Movie No Poster", "imageUrl": "", "category": "Trending", "trailerLink": "", "genre": "Drama", "rating": 6.1 },
+  { "id": "m3", "title": "Another Poster One", "imageUrl": "https://picsum.photos/300/451", "category": "Upcoming", "trailerLink": "", "genre": "Comedy", "rating": 8.0 }
+]

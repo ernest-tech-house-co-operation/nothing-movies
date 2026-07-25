@@ -76,4 +76,9 @@ std::string SearchAggregatorModule::getStreamUrl(const core::MediaResult& result
     return "";
 }
 
+// NEW implementation
+std::vector<SourceEntry> SearchAggregatorModule::getAllSources() const {
+    return sources_;
+}
+
 } // namespace search_aggregator

@@ -6,10 +6,13 @@ Item {
 
     ListModel { id: trendingModel }
     ListModel { id: upcomingModel }
+    ListModel { id: homepageModel }
 
     property string heroBackdrop: ""
     property string heroTitle: ""
     property string heroYear: ""
+    property string fallbackMessage: ""
+    property string currentSourceName: ""
 
     Connections {
         target: tmdbBridge
@@ -28,12 +31,28 @@ Item {
         }
     }
 
+    Connections {
+        target: homepageBridge
+        function onHomepageReady(items, sourceName, isFallback) {
+            homepageModel.clear()
+            for (var i = 0; i < items.length; i++) homepageModel.append(items[i])
+            currentSourceName = sourceName
+            fallbackMessage = isFallback
+                ? sourceName + " has no homepage — showing TMDB trending data"
+                : ""
+        }
+        function onHomepageError(message) {
+            console.warn("HomepageBridge error:", message)
+            fallbackMessage = ""
+        }
+    }
+
     Component.onCompleted: {
         tmdbBridge.loadTrending()
         tmdbBridge.loadUpcoming()
+        homepageBridge.loadHomepage()
     }
 
-    // base color behind everything
     Rectangle {
         anchors.fill: parent
         color: "#0b0b12"
@@ -41,7 +60,7 @@ Item {
 
     Flickable {
         anchors.fill: parent
-        contentHeight: mainColumn.height
+        contentHeight: mainColumn.implicitHeight
         clip: true
 
         ColumnLayout {
@@ -49,7 +68,7 @@ Item {
             width: parent.width
             spacing: 28
 
-            // --- Hero banner using a TMDB backdrop image ---
+            // ── Hero banner ──
             Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 320
@@ -61,9 +80,6 @@ Item {
                     asynchronous: true
                     visible: homeScreen.heroBackdrop !== ""
                 }
-
-                // dark-to-color gradient so text stays readable and the
-                // page doesn't feel like flat black
                 Rectangle {
                     anchors.fill: parent
                     gradient: Gradient {
@@ -80,128 +96,251 @@ Item {
                         GradientStop { position: 0.4; color: "#00000000" }
                     }
                 }
-
                 ColumnLayout {
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
                     anchors.margins: 32
                     spacing: 8
+                    Text { text: "Nothing Movies"; color: "#c4b5fd"; font.pixelSize: 14; font.bold: true; font.letterSpacing: 2 }
+                    Text { text: homeScreen.heroTitle; color: "white"; font.pixelSize: 34; font.bold: true; visible: homeScreen.heroTitle !== "" }
+                    Text { text: homeScreen.heroYear; color: "#d8d3ff"; font.pixelSize: 15; visible: homeScreen.heroYear !== "" }
+                }
+            }
 
-                    Text {
-                        text: "Nothing Movies"
-                        color: "#c4b5fd"
-                        font.pixelSize: 14
-                        font.bold: true
-                        font.letterSpacing: 2
-                    }
+            // ── DEBUG TEXTS (remove after confirmation) ──
+            Text {
+                text: "Trending count: " + trendingModel.count
+                color: "yellow"
+                font.pixelSize: 16
+                Layout.fillWidth: true
+            }
+            Text {
+                text: trendingModel.count > 0 ? "First title: " + trendingModel.get(0).title : "model empty"
+                color: "yellow"
+                font.pixelSize: 16
+                Layout.fillWidth: true
+            }
 
-                    Text {
-                        text: homeScreen.heroTitle
-                        color: "white"
-                        font.pixelSize: 34
-                        font.bold: true
-                        visible: homeScreen.heroTitle !== ""
-                    }
+            // ── Trending Grid ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 32
+                Layout.rightMargin: 32
+                spacing: 12
 
-                    Text {
-                        text: homeScreen.heroYear
-                        color: "#d8d3ff"
-                        font.pixelSize: 15
-                        visible: homeScreen.heroYear !== ""
+                Text {
+                    text: "Trending"
+                    color: "white"
+                    font.pixelSize: 20
+                    font.bold: true
+                }
+
+                Grid {
+                    columns: 5
+                    spacing: 10
+                    Layout.fillWidth: true
+
+                    Repeater {
+                        model: trendingModel
+                        delegate: Rectangle {
+                            width: (homeScreen.width - 64 - 4 * 10) / 5
+                            height: width
+                            radius: 8
+                            color: "#1a1a2e"
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: model.posterUrl || ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: model.posterUrl !== ""
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                text: "🎬"
+                                font.pixelSize: 28
+                                visible: !model.posterUrl || model.posterUrl === ""
+                            }
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                height: 36
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#00000000" }
+                                    GradientStop { position: 1.0; color: "#cc000000" }
+                                }
+                            }
+                            Text {
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: 6
+                                text: model.title || ""
+                                color: "white"
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: console.log("Trending:", model.title)
+                            }
+                        }
                     }
                 }
             }
 
+            // ── Upcoming Row ──
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.margins: 24
                 Layout.leftMargin: 32
                 Layout.rightMargin: 32
-                spacing: 32
+                spacing: 12
 
-                // --- Trending section: vertical list, scrolls downward ---
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 12
+                Text {
+                    text: "Upcoming"
+                    color: "white"
+                    font.pixelSize: 20
+                    font.bold: true
+                }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "Trending"
-                            color: "white"
-                            font.pixelSize: 20
-                            font.bold: true
-                        }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 2
-                            Layout.alignment: Qt.AlignVCenter
-                            Layout.leftMargin: 12
-                            gradient: Gradient {
-                                orientation: Gradient.Horizontal
-                                GradientStop { position: 0.0; color: "#7c3aed" }
-                                GradientStop { position: 1.0; color: "#00000000" }
+                Row {
+                    spacing: 10
+
+                    Repeater {
+                        model: upcomingModel
+                        delegate: Rectangle {
+                            width: (homeScreen.width - 64 - 4 * 10) / 5
+                            height: width
+                            radius: 8
+                            color: "#1a1a2e"
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: model.posterUrl || ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: model.posterUrl !== ""
                             }
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        Repeater {
-                            model: trendingModel
-
-                            delegate: MovieListItem {
-                                Layout.fillWidth: true
-                                movieTitle: model.title
-                                movieYear: model.year.toString()
-                                posterUrl: model.posterUrl
-                                onClicked: console.log("Selected:", model.title)
+                            Text {
+                                anchors.centerIn: parent
+                                text: "🎬"
+                                font.pixelSize: 28
+                                visible: !model.posterUrl || model.posterUrl === ""
+                            }
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                height: 36
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#00000000" }
+                                    GradientStop { position: 1.0; color: "#cc000000" }
+                                }
+                            }
+                            Text {
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: 6
+                                text: model.title || ""
+                                color: "white"
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: console.log("Upcoming:", model.title)
                             }
                         }
                     }
                 }
+            }
 
-                // --- Upcoming section: also a downward vertical list ---
-                ColumnLayout {
+            // ── Source Homepage Grid ── (replaced with 5‑column grid)
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 32
+                Layout.rightMargin: 32
+                spacing: 12
+
+                Text {
+                    text: currentSourceName !== "" ? currentSourceName : "From Source"
+                    color: "white"
+                    font.pixelSize: 20
+                    font.bold: true
+                }
+
+                Text {
+                    text: fallbackMessage
+                    color: "#fbbf24"
+                    font.pixelSize: 14
+                    visible: fallbackMessage !== ""
+                    wrapMode: Text.WordWrap
                     Layout.fillWidth: true
-                    spacing: 12
+                }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "Upcoming"
-                            color: "white"
-                            font.pixelSize: 20
-                            font.bold: true
-                        }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 2
-                            Layout.alignment: Qt.AlignVCenter
-                            Layout.leftMargin: 12
-                            gradient: Gradient {
-                                orientation: Gradient.Horizontal
-                                GradientStop { position: 0.0; color: "#06b6d4" }
-                                GradientStop { position: 1.0; color: "#00000000" }
+                Grid {
+                    columns: 5
+                    spacing: 10
+
+                    Repeater {
+                        model: homepageModel
+                        delegate: Rectangle {
+                            width: (homeScreen.width - 64 - 4 * 10) / 5
+                            height: width
+                            radius: 8
+                            color: "#13131f"
+                            border.color: "#2a2a3e"
+                            border.width: 1
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: model.posterUrl || ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: model.posterUrl !== ""
                             }
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        Repeater {
-                            model: upcomingModel
-
-                            delegate: MovieListItem {
-                                Layout.fillWidth: true
-                                movieTitle: model.title
-                                movieYear: model.year.toString()
-                                posterUrl: model.posterUrl
-                                onClicked: console.log("Selected:", model.title)
+                            Text {
+                                anchors.centerIn: parent
+                                text: "🎬"
+                                font.pixelSize: 28
+                                visible: !model.posterUrl || model.posterUrl === ""
+                            }
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                height: 50
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#00000000" }
+                                    GradientStop { position: 1.0; color: "#ee000000" }
+                                }
+                            }
+                            ColumnLayout {
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: 6
+                                spacing: 2
+                                Text {
+                                    text: model.title || ""
+                                    color: "white"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                RowLayout {
+                                    spacing: 3
+                                    visible: model.rating > 0
+                                    Text { text: "★"; color: "#f59e0b"; font.pixelSize: 10 }
+                                    Text { text: model.rating ? model.rating.toFixed(1) : ""; color: "#d1d5db"; font.pixelSize: 10 }
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: console.log("Homepage item:", model.title)
                             }
                         }
                     }

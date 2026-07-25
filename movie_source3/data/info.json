@@ -1,0 +1,24 @@
+{
+  "name": "MockSource3",
+  "hasHomepage": true,
+  "hasPoster": true,
+  "hasRating": true,
+  "hasSubtitles": false,
+  "hasDownload": true,
+  "hasStream": true,
+  "streamType": "http",
+  "downloadType": "torrent",
+  "hasInfo": true,
+  "info": {
+    "hasMovie": true,
+    "hasSeries": true,
+    "hasYear": true,
+    "hasRating": true,
+    "hasCast": true,
+    "hasSynopsis": true,
+    "hasTrailer": true,
+    "hasQuality": true,
+    "hasLength": true,
+    "hasSubtitles": true
+  }
+}

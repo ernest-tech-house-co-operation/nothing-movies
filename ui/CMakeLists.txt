@@ -1,20 +1,22 @@
 qt_add_resources(UI_RESOURCES resources.qrc)
 
 add_library(ui STATIC
-src/main_window.cpp
-src/TmdbBridge.cpp
-src/SearchBridge.cpp
-src/PlayerPageWidget.cpp
-src/VideoSurfaceWidget.cpp
-src/QueueBridge.cpp
-include/ui/MainWindow.h
-include/ui/TmdbBridge.h
-include/ui/SearchBridge.h
-include/ui/AppController.h
-include/ui/PlayerPageWidget.h
-include/ui/VideoSurfaceWidget.h
-include/ui/QueueBridge.h
-${UI_RESOURCES}
+    src/main_window.cpp
+    src/TmdbBridge.cpp
+    src/SearchBridge.cpp
+    src/HomepageBridge.cpp
+    src/PlayerPageWidget.cpp
+    src/VideoSurfaceWidget.cpp
+    src/QueueBridge.cpp
+    include/ui/MainWindow.h
+    include/ui/TmdbBridge.h
+    include/ui/SearchBridge.h
+    include/ui/HomepageBridge.h
+    include/ui/AppController.h
+    include/ui/PlayerPageWidget.h
+    include/ui/VideoSurfaceWidget.h
+    include/ui/QueueBridge.h
+    ${UI_RESOURCES}
 )
 set_target_properties(ui PROPERTIES
 AUTOMOC ON

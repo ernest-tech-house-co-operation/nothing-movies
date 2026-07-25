@@ -47,6 +47,10 @@ public:
     // result.sourceName) and asks it for the stream/magnet URL.
     std::string getStreamUrl(const core::MediaResult& result) const;
 
+    // NEW: Returns all registered sources (including disabled) so that
+    // HomepageBridge can iterate and check capabilities.
+    std::vector<SourceEntry> getAllSources() const;
+
 private:
     std::vector<SourceEntry> sources_;
 };
