@@ -11,8 +11,8 @@
 namespace ui {
 
 SearchBridge::SearchBridge(const std::string& tmdbApiKey,
-                            std::shared_ptr<search_aggregator::SearchAggregatorModule> aggregator,
-                            QObject* parent)
+                           std::shared_ptr<search_aggregator::SearchAggregatorModule> aggregator,
+                           QObject* parent)
     : QObject(parent),
       aggregator_(std::move(aggregator)),
       tmdbClient_(std::make_shared<tmdb_client::TmdbClient>(tmdbApiKey)) {}
@@ -38,7 +38,14 @@ void SearchBridge::search(const QString& query) {
             return;
         }
 
-        // Clean every raw title locally first -- cheap, pure regex, no network.
+        // Build a capability map per source name so we don't call
+        // getCapabilities() repeatedly inside the loop
+        std::unordered_map<std::string, core::SourceCapabilities> capsCache;
+        for (const auto& entry : aggregator->getAllSources()) {
+            capsCache[entry.name] = entry.provider->getCapabilities();
+        }
+
+        // Clean every raw title locally first — cheap, pure regex, no network.
         struct Cleaned {
             std::string title;
             int year = 0;
@@ -51,14 +58,19 @@ void SearchBridge::search(const QString& query) {
             keys[i] = c.title + "|" + std::to_string(c.year);
         }
 
-        // Only fire a TMDB lookup for sources that want posters/matching
-        // (SourceEntry::loadImages), and only once per unique (title, year)
-        // pair, run in parallel -- this is what fixes N-sequential-calls
-        // slowness. Sources with images disabled skip TMDB entirely and
-        // fall straight through to the raw/cleaned-title list below.
+        // Only fire TMDB lookups for sources where:
+        //   - loadImages is true (source wants posters)
+        //   - hasInfo is false (source doesn't provide its own clean data)
+        // Sources with hasInfo=true already return clean titles+posters
+        // from the source itself — running them through TMDB is redundant
+        // and slow.
         std::unordered_map<std::string, Cleaned> uniqueLookups;
         for (size_t i = 0; i < rawResults.size(); ++i) {
-            if (!aggregator->isSourceImagesEnabled(rawResults[i].sourceName)) continue;
+            const std::string& srcName = rawResults[i].sourceName;
+            auto capsIt = capsCache.find(srcName);
+            bool hasInfo = capsIt != capsCache.end() && capsIt->second.hasInfo;
+            if (hasInfo) continue;  // skip TMDB — source provides its own data
+            if (!aggregator->isSourceImagesEnabled(srcName)) continue;
             uniqueLookups.emplace(keys[i], cleaned[i]);
         }
 
@@ -84,26 +96,46 @@ void SearchBridge::search(const QString& query) {
         results.reserve(static_cast<int>(rawResults.size()));
         for (size_t i = 0; i < rawResults.size(); ++i) {
             const auto& raw = rawResults[i];
+            const std::string& srcName = raw.sourceName;
+
+            auto capsIt = capsCache.find(srcName);
+            bool hasInfo = capsIt != capsCache.end() && capsIt->second.hasInfo;
+            bool hasStream = capsIt != capsCache.end() && capsIt->second.hasStream;
+            bool hasDownload = capsIt != capsCache.end() && capsIt->second.hasDownload;
+            std::string streamType = capsIt != capsCache.end() ? capsIt->second.streamType : "";
+            std::string downloadType = capsIt != capsCache.end() ? capsIt->second.downloadType : "";
 
             QVariantMap entry;
-            entry["id"] = QString::fromStdString(raw.id);
-            entry["sourceName"] = QString::fromStdString(raw.sourceName);
-            entry["rawTitle"] = QString::fromStdString(raw.title);
+            entry["id"]           = QString::fromStdString(raw.id);
+            entry["sourceName"]   = QString::fromStdString(srcName);
+            entry["rawTitle"]     = QString::fromStdString(raw.title);
+            entry["hasInfo"]      = hasInfo;
+            entry["hasStream"]    = hasStream;
+            entry["hasDownload"]  = hasDownload;
+            entry["streamType"]   = QString::fromStdString(streamType);
+            entry["downloadType"] = QString::fromStdString(downloadType);
 
-            auto matchIt = matchCache.find(keys[i]);
-            const bool matched = matchIt != matchCache.end() && matchIt->second.found;
-            entry["matched"] = matched;
-
-            if (matched) {
-                entry["title"] = QString::fromStdString(matchIt->second.officialTitle);
-                entry["posterUrl"] = QString::fromStdString(matchIt->second.posterUrl);
-                entry["year"] = matchIt->second.year;
-            } else {
-                // No TMDB match, or this source skips images -- fall back
-                // to the locally-cleaned title, no poster, no network wait.
-                entry["title"] = QString::fromStdString(cleaned[i].title);
+            if (hasInfo) {
+                // Source provides its own clean data — use it directly,
+                // no TMDB involved at all
+                entry["matched"]   = true;
+                entry["title"]     = QString::fromStdString(raw.title);
                 entry["posterUrl"] = QString::fromStdString(raw.posterUrl);
-                entry["year"] = cleaned[i].year;
+                entry["year"]      = 0;  // sources with hasInfo return year via getMediaInfo
+            } else {
+                auto matchIt = matchCache.find(keys[i]);
+                const bool matched = matchIt != matchCache.end() && matchIt->second.found;
+                entry["matched"] = matched;
+
+                if (matched) {
+                    entry["title"]     = QString::fromStdString(matchIt->second.officialTitle);
+                    entry["posterUrl"] = QString::fromStdString(matchIt->second.posterUrl);
+                    entry["year"]      = matchIt->second.year;
+                } else {
+                    entry["title"]     = QString::fromStdString(cleaned[i].title);
+                    entry["posterUrl"] = QString::fromStdString(raw.posterUrl);
+                    entry["year"]      = cleaned[i].year;
+                }
             }
 
             results.append(entry);

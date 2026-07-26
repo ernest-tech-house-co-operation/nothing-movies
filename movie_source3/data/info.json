@@ -1,5 +1,7 @@
 {
   "name": "MockSource3",
+  "version": "1.0.0",
+  "profilePicture": "https://picsum.photos/100/100",
   "hasHomepage": true,
   "hasPoster": true,
   "hasRating": true,

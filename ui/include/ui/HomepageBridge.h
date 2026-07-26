@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QVariantList>
+#include <QVariantMap>
 #include <memory>
 #include <string>
 
@@ -21,10 +22,15 @@ public:
                             QObject* parent = nullptr);
 
     Q_INVOKABLE void loadHomepage();
+    Q_INVOKABLE void loadInfo(const QString& id, const QString& sourceName);
+    Q_INVOKABLE QVariantList getSources();
+    Q_INVOKABLE QVariantList getSubtitleUrls(const QString& id, const QString& sourceName);
 
 signals:
     void homepageReady(QVariantList items, QString sourceName, bool isFallback);
     void homepageError(QString message);
+    void infoReady(QVariantMap info);
+    void infoError(QString message);
 
 private:
     std::shared_ptr<search_aggregator::SearchAggregatorModule> aggregator_;

@@ -12,6 +12,7 @@ public:
     core::SourceCapabilities getCapabilities() const override;
     std::vector<core::HomepageItem> getHomepage() override;
     core::MediaInfo getMediaInfo(const std::string& id) override;
+    std::vector<std::string> getSubtitleUrls(const std::string& id) override;
 
 private:
     core::SourceCapabilities capabilities_;

@@ -7,37 +7,45 @@
 
 namespace ui {
 
-// Polls queue_manager and hands QML a flat list of {id, title, type,
-// state, progress, filePath, readyToPlay} so DownloadsScreen can show
-// real in-progress/finished items instead of a placeholder.
 class QueueBridge : public QObject {
     Q_OBJECT
 public:
     explicit QueueBridge(std::shared_ptr<queue_manager::Queue_managerModule> queueManager,
-                          QObject* parent = nullptr);
+                         QObject* parent = nullptr);
 
-    // QML can call this on becoming visible for an immediate refresh,
-    // on top of the automatic poll below.
     Q_INVOKABLE void refresh();
 
-    // Queues title/url for download without starting playback -- routes to
-    // torrent_service or the plain HTTP downloader depending on the url
-    // scheme. Returns false if queue_manager couldn't accept it.
+    // Download only — routes torrent vs http via magnet: prefix
     Q_INVOKABLE bool enqueue(const QString& title, const QString& url);
 
-    // Lets the UI show the user exactly where their files land instead of
-    // that being a mystery.
+    // Stream a torrent — enqueues with sequential download, polls until
+    // readyToPlay, then emits torrentReadyToPlay(title, filePath)
+    Q_INVOKABLE void streamTorrent(const QString& title, const QString& magnetUri);
+
+    // Stream an HTTP url — emits httpStreamReady(title, url) immediately
+    Q_INVOKABLE void streamHttp(const QString& title, const QString& url);
+
     Q_INVOKABLE QString downloadFolder() const;
 
 signals:
     void itemsReady(const QVariantList& items);
+    void torrentReadyToPlay(const QString& title, const QString& filePath);
+    void httpStreamReady(const QString& title, const QString& url);
+    void streamError(const QString& message);
 
 private:
     std::shared_ptr<queue_manager::Queue_managerModule> queueManager_;
     QTimer* pollTimer_ = nullptr;
 
+    // tracks torrent ids that are pending stream (not download)
+    struct PendingStream {
+        QString title;
+        QString torrentId;
+    };
+    QList<PendingStream> pendingStreams_;
+
     static QString stateToString(queue_manager::QueueItemState state);
     QVariantList toVariantList() const;
 };
 
-}  // namespace ui
+} // namespace ui

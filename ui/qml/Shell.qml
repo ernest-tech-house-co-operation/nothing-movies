@@ -19,13 +19,11 @@ Item {
             id: topBar
             Layout.fillWidth: true
             Layout.preferredHeight: 64
-
             gradient: Gradient {
                 orientation: Gradient.Horizontal
                 GradientStop { position: 0.0; color: "#1a1030" }
                 GradientStop { position: 1.0; color: "#0f1230" }
             }
-
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -33,7 +31,6 @@ Item {
                 height: 1
                 color: "#2a2450"
             }
-
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 24
@@ -45,7 +42,6 @@ Item {
                     color: "white"
                     font.pixelSize: 18
                     font.bold: true
-
                     Rectangle {
                         anchors.left: parent.left
                         anchors.right: parent.right
@@ -65,7 +61,6 @@ Item {
 
                 Row {
                     spacing: 8
-
                     Repeater {
                         model: [
                             { label: "Home",      icon: "🏠" },
@@ -92,17 +87,38 @@ Item {
             Layout.fillHeight: true
             currentIndex: 0
 
-            HomeScreen {}
+            // ── Home (index 0) ──
+            Item {
+                id: homeSection
+                StackView {
+                    id: homeStack
+                    anchors.fill: parent
+                    initialItem: homeScreenComponent
+                }
+                Component {
+                    id: homeScreenComponent
+                    HomeScreen {
+                        onInfoRequested: (info) => {
+                            homeStack.push(homeInfoScreenComponent, { result: info })
+                        }
+                    }
+                }
+                Component {
+                    id: homeInfoScreenComponent
+                    InfoScreen {
+                        onBackRequested: homeStack.pop()
+                    }
+                }
+            }
 
+            // ── Search (index 1) ──
             Item {
                 id: searchSection
-
                 StackView {
                     id: searchStack
                     anchors.fill: parent
                     initialItem: searchScreenComponent
                 }
-
                 Component {
                     id: searchScreenComponent
                     SearchScreen {
@@ -111,7 +127,6 @@ Item {
                         }
                     }
                 }
-
                 Component {
                     id: infoScreenComponent
                     InfoScreen {
@@ -120,9 +135,16 @@ Item {
                 }
             }
 
+            // ── Downloads (index 2) ──
             DownloadsScreen {}
+
+            // ── Sources (index 3) ──
             SourcesScreen {}
+
+            // ── Thanks (index 4) ──
             ThanksScreen {}
+
+            // ── Settings (index 5) ──
             SettingsScreen {
                 onOpenThanksRequested: contentStack.currentIndex = 4
             }

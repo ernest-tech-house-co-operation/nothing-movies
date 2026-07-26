@@ -4,6 +4,8 @@ import QtQuick.Layouts 1.15
 Item {
     id: homeScreen
 
+    signal infoRequested(var info)
+
     ListModel { id: trendingModel }
     ListModel { id: upcomingModel }
     ListModel { id: homepageModel }
@@ -44,6 +46,12 @@ Item {
         function onHomepageError(message) {
             console.warn("HomepageBridge error:", message)
             fallbackMessage = ""
+        }
+        function onInfoReady(info) {
+            homeScreen.infoRequested(info)
+        }
+        function onInfoError(message) {
+            console.warn("HomepageBridge info error:", message)
         }
     }
 
@@ -107,20 +115,6 @@ Item {
                 }
             }
 
-            // ── DEBUG TEXTS (remove after confirmation) ──
-            Text {
-                text: "Trending count: " + trendingModel.count
-                color: "yellow"
-                font.pixelSize: 16
-                Layout.fillWidth: true
-            }
-            Text {
-                text: trendingModel.count > 0 ? "First title: " + trendingModel.get(0).title : "model empty"
-                color: "yellow"
-                font.pixelSize: 16
-                Layout.fillWidth: true
-            }
-
             // ── Trending Grid ──
             ColumnLayout {
                 Layout.fillWidth: true
@@ -128,17 +122,11 @@ Item {
                 Layout.rightMargin: 32
                 spacing: 12
 
-                Text {
-                    text: "Trending"
-                    color: "white"
-                    font.pixelSize: 20
-                    font.bold: true
-                }
+                Text { text: "Trending"; color: "white"; font.pixelSize: 20; font.bold: true }
 
                 Grid {
                     columns: 5
                     spacing: 10
-                    Layout.fillWidth: true
 
                     Repeater {
                         model: trendingModel
@@ -197,16 +185,10 @@ Item {
                 Layout.rightMargin: 32
                 spacing: 12
 
-                Text {
-                    text: "Upcoming"
-                    color: "white"
-                    font.pixelSize: 20
-                    font.bold: true
-                }
+                Text { text: "Upcoming"; color: "white"; font.pixelSize: 20; font.bold: true }
 
                 Row {
                     spacing: 10
-
                     Repeater {
                         model: upcomingModel
                         delegate: Rectangle {
@@ -257,7 +239,7 @@ Item {
                 }
             }
 
-            // ── Source Homepage Grid ── (replaced with 5‑column grid)
+            // ── Source Homepage Grid ──
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 32
@@ -287,12 +269,13 @@ Item {
                     Repeater {
                         model: homepageModel
                         delegate: Rectangle {
+                            id: card
                             width: (homeScreen.width - 64 - 4 * 10) / 5
                             height: width
                             radius: 8
                             color: "#13131f"
-                            border.color: "#2a2a3e"
-                            border.width: 1
+                            border.color: hoverArea.containsMouse ? "#7c3aed" : "#2a2a3e"
+                            border.width: hoverArea.containsMouse ? 2 : 1
                             clip: true
 
                             Image {
@@ -308,6 +291,42 @@ Item {
                                 font.pixelSize: 28
                                 visible: !model.posterUrl || model.posterUrl === ""
                             }
+
+                            // dark overlay on hover
+                            Rectangle {
+                                anchors.fill: parent
+                                color: "#99000000"
+                                visible: hoverArea.containsMouse
+                            }
+
+                            // "View Info" button — only if source hasInfo
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.7
+                                height: 32
+                                radius: 6
+                                color: "#7c3aed"
+                                visible: hoverArea.containsMouse && (model.hasInfo === true)
+                                z:10
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "View Info"
+                                    color: "white"
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    z:10
+                                    onClicked: {
+                                        homepageBridge.loadInfo(model.id, model.sourceName)
+                                    }
+                                }
+                            }
+
+                            // title + rating overlay at bottom
                             Rectangle {
                                 anchors.bottom: parent.bottom
                                 width: parent.width
@@ -338,8 +357,11 @@ Item {
                                     Text { text: model.rating ? model.rating.toFixed(1) : ""; color: "#d1d5db"; font.pixelSize: 10 }
                                 }
                             }
+
                             MouseArea {
+                                id: hoverArea
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 onClicked: console.log("Homepage item:", model.title)
                             }
                         }

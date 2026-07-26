@@ -16,6 +16,7 @@ public:
     core::SourceCapabilities getCapabilities() const override { return {}; }
     std::vector<core::HomepageItem> getHomepage() override { return {}; }
     core::MediaInfo getMediaInfo(const std::string&) override { return {}; }
+    std::vector<std::string> getSubtitleUrls(const std::string&) override { return {}; }
 
 private:
     std::string detectQuality(const std::string& name) const;

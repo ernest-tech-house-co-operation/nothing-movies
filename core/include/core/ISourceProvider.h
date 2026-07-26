@@ -33,7 +33,9 @@ struct SourceCapabilities {
     bool hasStream    = false;
     bool hasInfo      = false;
     std::string streamType   = "";  // "http" or "torrent"
-    std::string downloadType = "";  // "http" or "torrent"
+    std::string downloadType = "";
+    std::string version        = "";
+    std::string profilePicture = "";
     InfoCapabilities info;
 };
 
@@ -80,6 +82,7 @@ public:
     virtual SourceCapabilities        getCapabilities() const = 0;
     virtual std::vector<HomepageItem> getHomepage() = 0;
     virtual MediaInfo                 getMediaInfo(const std::string& id) = 0;
+    virtual std::vector<std::string>  getSubtitleUrls(const std::string& id) = 0;
 };
 
 } // namespace core
