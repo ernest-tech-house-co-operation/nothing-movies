@@ -10,7 +10,6 @@ Rectangle {
 
     ListModel { id: resultsModel }
 
-    // listen for homepageBridge.loadInfo() results triggered from search cards
     Connections {
         target: homepageBridge
         function onInfoReady(info) {
@@ -63,7 +62,6 @@ Rectangle {
                 anchors.rightMargin: 24
                 spacing: 12
 
-                // search field
                 Rectangle {
                     Layout.fillWidth: true
                     height: 38
@@ -97,7 +95,6 @@ Rectangle {
                             }
                         }
 
-                        // clear button
                         Text {
                             text: "✕"
                             color: "#6b7280"
@@ -115,7 +112,6 @@ Rectangle {
                     }
                 }
 
-                // search button
                 Rectangle {
                     width: 90
                     height: 38
@@ -125,7 +121,6 @@ Rectangle {
                         GradientStop { position: 0.0; color: "#7c3aed" }
                         GradientStop { position: 1.0; color: "#6d28d9" }
                     }
-
                     Text {
                         anchors.centerIn: parent
                         text: "Search"
@@ -174,9 +169,24 @@ Rectangle {
                     anchors.margins: 6
                     radius: 10
                     color: "#13131f"
-                    border.color: cardHover.containsMouse ? "#7c3aed" : "#2a2a3e"
-                    border.width: cardHover.containsMouse ? 2 : 1
+                    border.color: cardHover.hovered ? "#7c3aed" : "#2a2a3e"
+                    border.width: cardHover.hovered ? 2 : 1
                     clip: true
+
+                    HoverHandler {
+                        id: cardHover
+                    }
+
+                    // DEBUG — remove after fix
+                    Text {
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.margins: 4
+                        text: "hasInfo:" + model.hasInfo + " hasStream:" + model.hasStream
+                        color: "yellow"
+                        font.pixelSize: 9
+                        z: 20
+                    }
 
                     // poster
                     Image {
@@ -194,15 +204,10 @@ Rectangle {
                             visible: !model.posterUrl || model.posterUrl.length === 0
                             anchors.fill: parent
                             color: "#1a1a2e"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "🎬"
-                                font.pixelSize: 32
-                            }
+                            Text { anchors.centerIn: parent; text: "🎬"; font.pixelSize: 32 }
                         }
                     }
 
-                    // gradient over bottom of poster
                     Rectangle {
                         anchors.bottom: posterImg.bottom
                         anchors.left: parent.left
@@ -214,7 +219,6 @@ Rectangle {
                         }
                     }
 
-                    // info below poster
                     ColumnLayout {
                         anchors.top: posterImg.bottom
                         anchors.left: parent.left
@@ -244,15 +248,12 @@ Rectangle {
                             }
                             Rectangle {
                                 width: sourceLabel.implicitWidth + 10
-                                height: 16
-                                radius: 3
-                                color: "#1f2937"
+                                height: 16; radius: 3; color: "#1f2937"
                                 Text {
                                     id: sourceLabel
                                     anchors.centerIn: parent
                                     text: model.sourceName || ""
-                                    color: "#a78bfa"
-                                    font.pixelSize: 10
+                                    color: "#a78bfa"; font.pixelSize: 10
                                 }
                             }
                         }
@@ -262,20 +263,21 @@ Rectangle {
                     Rectangle {
                         anchors.fill: parent
                         color: "#88000000"
-                        visible: cardHover.containsMouse
+                        visible: cardHover.hovered
                         radius: 10
+                        enabled: false
                     }
 
-                    // "View Info" button — only for hasInfo sources
+                    // View Info — hasInfo sources
                     Rectangle {
-                        anchors.centerIn: parent
-                        anchors.verticalCenterOffset: -10
-                        width: card.width * 0.75
+                        x: (card.width - 110) / 2
+                        y: (card.height / 2) - 17
+                        width: 110
                         height: 34
                         radius: 8
                         color: "#7c3aed"
-                        visible: cardHover.containsMouse && model.hasInfo === true
-                        z: 10
+                        visible: cardHover.hovered && model.hasInfo === true
+                        z: 20
 
                         Text {
                             anchors.centerIn: parent
@@ -286,26 +288,24 @@ Rectangle {
                         }
                         MouseArea {
                             anchors.fill: parent
-                            z: 10
                             onClicked: homepageBridge.loadInfo(model.id, model.sourceName)
                         }
                     }
 
-                    // "Stream / Download" buttons for non-hasInfo sources on hover
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        anchors.verticalCenterOffset: -10
-                        spacing: 6
-                        visible: cardHover.containsMouse && model.hasInfo !== true
-                        z: 10
+                    // Stream + Download — non-hasInfo sources
+                    Column {
+                        x: (card.width - 110) / 2
+                        y: (card.height / 2) - 40
+                        spacing: 8
+                        visible: cardHover.hovered && model.hasInfo !== true
+                        z: 20
 
                         Rectangle {
-                            width: card.width * 0.75
+                            width: 110
                             height: 32
                             radius: 8
                             color: "#7c3aed"
                             visible: model.hasStream === true
-                            Layout.alignment: Qt.AlignHCenter
 
                             Text {
                                 anchors.centerIn: parent
@@ -316,30 +316,31 @@ Rectangle {
                             }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: root.resultSelected({
-                                    id: model.id,
-                                    sourceName: model.sourceName,
-                                    title: model.title,
-                                    posterUrl: model.posterUrl,
-                                    year: model.year,
-                                    matched: model.matched,
-                                    rawTitle: model.rawTitle,
-                                    hasStream: model.hasStream,
-                                    hasDownload: model.hasDownload,
-                                    streamType: model.streamType,
-                                    downloadType: model.downloadType,
-                                    hasInfo: false
-                                })
+                                onClicked: {
+                                    root.resultSelected({
+                                        id: model.id,
+                                        sourceName: model.sourceName,
+                                        title: model.title,
+                                        posterUrl: model.posterUrl,
+                                        year: model.year,
+                                        matched: model.matched,
+                                        rawTitle: model.rawTitle,
+                                        hasStream: model.hasStream,
+                                        hasDownload: model.hasDownload,
+                                        streamType: model.streamType,
+                                        downloadType: model.downloadType,
+                                        hasInfo: false
+                                    })
+                                }
                             }
                         }
 
                         Rectangle {
-                            width: card.width * 0.75
+                            width: 110
                             height: 32
                             radius: 8
                             color: "#059669"
                             visible: model.hasDownload === true
-                            Layout.alignment: Qt.AlignHCenter
 
                             Text {
                                 anchors.centerIn: parent
@@ -350,28 +351,12 @@ Rectangle {
                             }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: root.resultSelected({
-                                    id: model.id,
-                                    sourceName: model.sourceName,
-                                    title: model.title,
-                                    posterUrl: model.posterUrl,
-                                    year: model.year,
-                                    matched: model.matched,
-                                    rawTitle: model.rawTitle,
-                                    hasStream: model.hasStream,
-                                    hasDownload: model.hasDownload,
-                                    streamType: model.streamType,
-                                    downloadType: model.downloadType,
-                                    hasInfo: false
-                                })
+                                onClicked: {
+                                    // TODO: Implement download directly from search
+                                    console.log("Download clicked: " + model.title)
+                                }
                             }
                         }
-                    }
-
-                    MouseArea {
-                        id: cardHover
-                        anchors.fill: parent
-                        hoverEnabled: true
                     }
                 }
             }

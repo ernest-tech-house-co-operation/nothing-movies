@@ -153,5 +153,17 @@ QVariantList HomepageBridge::getSources() {
 
     return list;
 }
+QVariantList HomepageBridge::getSubtitleUrls(const QString& id, const QString& sourceName) {
+    QVariantList list;
+    if (!aggregator_) return list;
+    for (const auto& entry : aggregator_->getAllSources()) {
+        if (QString::fromStdString(entry.name) != sourceName) continue;
+        auto urls = entry.provider->getSubtitleUrls(id.toStdString());
+        for (const auto& url : urls)
+            list.append(QString::fromStdString(url));
+        break;
+    }
+    return list;
+}
 
 } // namespace ui

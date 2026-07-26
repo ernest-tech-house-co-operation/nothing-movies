@@ -1,0 +1,14 @@
+{
+  "name": "Apibay (Torrent)",
+  "version": "1.0.0",
+  "profilePicture": "https://avatars.githubusercontent.com/u/173539960?v=4&size=64",
+  "hasHomepage": false,
+  "hasPoster": false,
+  "hasRating": false,
+  "hasSubtitles": false,
+  "hasDownload": true,
+  "hasStream": true,
+  "streamType": "torrent",
+  "downloadType": "torrent",
+  "hasInfo": false
+}
