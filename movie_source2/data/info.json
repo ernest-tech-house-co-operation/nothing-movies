@@ -1,0 +1,26 @@
+{
+  "name": "AnimeCloud",
+  "version": "1.0.0",
+  "profilePicture": "https://fireani.me/favicon.ico",
+  "hasHomepage": true,
+  "hasPoster": true,
+  "hasRating": true,
+  "hasSubtitles": true,
+  "hasDownload": true,
+  "hasStream": true,
+  "streamType": "http",
+  "downloadType": "http",
+  "hasInfo": true,
+  "info": {
+    "hasMovie": true,
+    "hasSeries": true,
+    "hasYear": true,
+    "hasRating": true,
+    "hasCast": false,
+    "hasSynopsis": true,
+    "hasTrailer": false,
+    "hasQuality": true,
+    "hasLength": false,
+    "hasSubtitles": true
+  }
+}

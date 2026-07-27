@@ -13,9 +13,9 @@ and no other tool. No Playwright, no Puppeteer, no Python Selenium, no
 headless Chrome wrappers of any kind.
 
 **Why:** one engine means one thing to maintain. When a site changes its
-anti-bot behavior, the fix goes into Nothing Browser once and every source
-benefits automatically. If everyone used a different tool, every source would
-break independently and need separate fixes.
+anti-bot behavior, the fix goes into Nothing Browser (or `scraper_core`)
+once and every source benefits automatically. If everyone used a different
+tool, every source would break independently and need separate fixes.
 
 ---
 
@@ -35,47 +35,67 @@ simplest tool that works for each step.
 
 ## The C++ interface — `scraper_core`
 
-Nothing Browser movie sources are written in **pure C++**. Do not use the
-Piggy JS library (`nothing-browser` npm package) or any JS/TypeScript layer.
-`scraper_core` provides the C++ interface to Nothing Browser. That is what
-you use.
+Nothing Browser movie sources are written in **pure C++ against
+`scraper_core`'s API**. That is the only thing a source ever touches:
 
 ```cpp
-#include "scraper_core/scraper_core.h"
+#include "scraper_core/ScraperEngine.h"
 
-// Navigate to a page and get its HTML
-std::string html = scraper_core::getPageHtml("https://example.com/player/123");
+scraper_core::NothingBrowser browser;
+browser.start();                                    // launches Nothing Browser
+browser.registerSite("mysite", "https://example.com");
 
-// Extract a value using a CSS selector
-std::string token = scraper_core::querySelector(html, "form#wrapper input[name=csrftkn]", "value");
+browser.call("mysite", "navigate", {"https://example.com/player/123"});
 
-// Get a cookie from a response
-std::string session = scraper_core::getCookie("https://example.com/proxy/player/abc?csrftkn=" + token, "session");
+QJsonObject reply = browser.call("mysite", "provide.attr",
+    {"form#wrapper input[name=csrftkn]", "value"});
+QString token = reply.value("data").toString();
+
+QJsonObject session = browser.call("mysite", "session.export");
+
+browser.shutdown();
 ```
 
-Check `scraper_core/include/scraper_core/scraper_core.h` for the full API.
-If a method you need doesn't exist yet, add it to `scraper_core` — don't
-work around it by shelling out or using a different tool.
+Method names passed to `call()` (`"navigate"`, `"provide.attr"`,
+`"session.export"`, etc.) match the Nothing Browser site API 1:1 — see
+`scraper_core/scripts/piggy_runner.js` for the authoritative list of what's
+callable and how arguments map.
+
+**Do not write or ship any JS/TS/Python in your source module.** If a method
+you need isn't reachable through `browser.call(...)`, that's a `scraper_core`
+gap — fix it there, don't work around it in your plugin.
 
 ---
 
-## The Cloudstream reference pattern
+## Implementation note: how `scraper_core` talks to Nothing Browser
 
-When implementing a new source, find the Cloudstream plugin for the same
-site if one exists. Cloudstream plugins are written in Kotlin but the logic
-translates directly to C++:
+This section is here so contributors understand the architecture — you
+don't need any of this to *write* a source, only if you're modifying
+`scraper_core` itself.
 
-| Cloudstream | C++ equivalent |
-|---|---|
-| `app.post(url, requestBody = json)` | `httpPost(url, json)` via libcurl |
-| `app.get(url).document.select("selector")` | Nothing Browser + CSS selector |
-| `app.get(url).cookies["session"]` | Nothing Browser cookie extraction |
-| `parsedSafe<DataClass>()` | `nlohmann::json::parse()` |
-| `data.animeSeasons.forEach { }` | range-based for loop over parsed JSON |
+Nothing Browser's actual wire protocol (tab lifecycle, message framing,
+event vs. reply vs. error shapes) is non-trivial and is already correctly
+implemented and tested in the official `nothing-browser` npm client
+library. Rather than re-deriving that protocol by hand in C++ — which
+drifts out of sync with the real binary and is very easy to get subtly
+wrong — `scraper_core::NothingBrowser` spawns a small, persistent Node
+process (`scraper_core/scripts/piggy_runner.js`) that uses the real
+`nothing-browser` client internally, and talks to it over a simple
+JSON-lines protocol on stdin/stdout:
 
-The Cloudstream plugin tells you the exact API endpoints, request format,
-response structure, and what selectors to use. Translate it to C++ — don't
-copy the Kotlin.
+```
+C++ (scraper_core)  <-- JSON lines over stdin/stdout -->  piggy_runner.js  <-- real protocol -->  Nothing Browser binary
+```
+
+This is an internal implementation detail of `scraper_core` only.
+Source plugins never see `piggy_runner.js`, never spawn Node themselves,
+and never send raw JSON commands — they call `browser.call(site, method,
+args)` and get a `QJsonObject` back, same as always.
+
+**Runtime requirement:** because of this, machines running Nothing Movies
+now need Node.js available on `PATH` in addition to the Nothing Browser
+binary. Document this alongside the Nothing Browser install step (see
+below).
 
 ---
 
@@ -89,13 +109,22 @@ Nothing Browser binary is **never bundled in the Nothing Movies app binary**.
   ```bash
   curl -L https://github.com/BunElysiaReact/nothing-browser/releases/latest/download/nothing-browser-linux-x86_64.tar.gz | tar -xz -C ~/.local/bin
   ```
-- **Auto-update:** `vendor_updater` keeps the binary current. Wire your
-  source's vendor target the same way `scraper_core` does — point it at
-  the Nothing Browser GitHub releases and let the updater handle the rest.
+- **Node.js + the runner's dependencies** must also be present at runtime:
+  ```bash
+  cd scraper_core/scripts
+  npm install
+  ```
+  This installs the `nothing-browser` npm client that `piggy_runner.js`
+  depends on. `node_modules/` here is git-ignored and must be installed
+  locally / as part of your packaging step — it is never committed.
+- **Auto-update:** `vendor_updater` keeps the Nothing Browser binary current.
+  Wire your source's vendor target the same way `scraper_core` does — point
+  it at the Nothing Browser GitHub releases and let the updater handle the
+  rest. (The `piggy_runner.js` npm dependency is versioned via
+  `scraper_core/scripts/package.json` instead.)
 
-Your source's `init()` should verify Nothing Browser exists and is the
-expected version before attempting to use it, and fail gracefully with a
-clear error if it doesn't:
+Your source's `init()` should verify Nothing Browser exists before
+attempting to use it, and fail gracefully with a clear error if it doesn't:
 
 ```cpp
 bool AnimeCloudProvider::init() {
@@ -120,7 +149,8 @@ movie_source2/
     └── info.json
 ```
 
-**`CMakeLists.txt`** — link `scraper_core` alongside `curl` and `nlohmann_json`:
+Nothing changes here from before — `scraper_core` absorbs all the
+complexity described above. Your source's CMakeLists just links it:
 
 ```cmake
 find_package(CURL REQUIRED)
@@ -135,7 +165,6 @@ target_link_libraries(movie_source2 PUBLIC
     nlohmann_json::nlohmann_json
 )
 
-# Auto-copy data folder to build dir
 add_custom_command(
     TARGET movie_source2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -148,9 +177,6 @@ add_custom_command(
 ---
 
 ## Example: AnimeCloud (movie_source2) flow
-
-This is what the implementation of `movie_source2` looks like conceptually.
-The actual code lives in `movie_source2/src/movie_source2.cpp`.
 
 ### Data flow (no browser needed)
 
@@ -176,21 +202,25 @@ getMediaInfo(id)
 
 ```
 getStreamUrl(id)
-  → id is the episode link URL from GetEpisode response
-  → scraper_core: GET /proxy/player/{id}
-      extract csrftkn from: form#wrapper input[name=csrftkn]
-  → scraper_core: GET /proxy/player/adehu1awmdxx?csrftkn={token}
-      extract session cookie
-  → return "{mainUrl}/proxy/nocache/{id}/" + headers{"Cookie": "session={session}"}
+  → browser.start()
+  → browser.registerSite(siteName, baseUrl)
+  → browser.call(siteName, "navigate", {baseUrl + "/proxy/player/" + id})
+  → browser.call(siteName, "provide.attr",
+                  {"form#wrapper input[name=csrftkn]", "value"})
+      → csrfToken = reply.data
+  → browser.call(siteName, "navigate",
+                  {baseUrl + "/proxy/player/" + id + "?csrftkn=" + csrfToken})
+  → browser.call(siteName, "session.export")
+      → sessionCookie = reply.data
+  → return baseUrl + "/proxy/nocache/" + id + "/" with Cookie header
 ```
 
 ---
 
 ## What goes in `info.json` for a Nothing Browser source
 
-Same format as any other source. The fact that it uses Nothing Browser
-internally is an implementation detail — the manifest just describes what
-the source can do from the app's perspective:
+Same format as any other source — using Nothing Browser internally is an
+implementation detail, the manifest just describes capabilities:
 
 ```json
 {
@@ -227,11 +257,11 @@ the source can do from the app's perspective:
 
 Everything in Part 1 and Part 2 applies, plus:
 
-- [ ] Uses `scraper_core` — no other scraping tool
-- [ ] Written in pure C++ — no JS/TS/Python anywhere in the module
+- [ ] Uses `scraper_core::NothingBrowser` — no other scraping tool, no JS/TS/Python in the module itself
 - [ ] `init()` checks for Nothing Browser availability and fails gracefully
 - [ ] External binary wired to `vendor_updater` — not bundled
-- [ ] Tested with Nothing Browser installed (not just with the JSON API parts)
+- [ ] Tested with Nothing Browser **and** Node.js installed, plus
+      `scraper_core/scripts/npm install` run at least once
 - [ ] Stream URL extraction tested and confirmed working
 - [ ] Nothing Browser version requirement documented in the PR
 
@@ -241,6 +271,7 @@ Everything in Part 1 and Part 2 applies, plus:
 
 Part 4 will cover:
 - Windows + Linux cross-platform build checklist for Nothing Browser sources
-- How to document selector changes when a site updates
+  (including the Node.js runtime requirement)
+- How to document selector/method changes when a site or `piggy_runner.js` updates
 - The `vendor_updater` integration in detail
 - Submitting a PR with a Nothing Browser source

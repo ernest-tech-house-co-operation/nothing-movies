@@ -19,7 +19,7 @@
 #include "queue_manager/queue_manager.h"
 #include "movie_source1/movie_source1.h"
 #include "movie_source3/movie_source3.h"
-// #include "movie_source2/movie_source2.h"  // paste movie_source2.h contents and I'll fill the line below in
+#include "movie_source2/movie_source2.h"  
 
 namespace {
 
@@ -122,7 +122,7 @@ std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator
     auto aggregator = std::make_shared<search_aggregator::SearchAggregatorModule>();
 
     aggregator->registerSource("Apibay (Torrent)", std::make_shared<movie_source1::ApibayProvider>());
-    // aggregator->registerSource("<name>", std::make_shared<movie_source2::???Provider>());
+    aggregator->registerSource("AnimeCloud", std::make_shared<movie_source2::AnimeCloudProvider>());
     aggregator->registerSource("MockSource3", std::make_shared<movie_source3::MockSourceProvider>());
 
     return aggregator;

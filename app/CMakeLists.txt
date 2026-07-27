@@ -9,6 +9,7 @@ target_link_libraries(nothingmovies PRIVATE
     queue_manager
     movie_source1
     movie_source3
+    movie_source2
     scraper_core
     vendor_updater
     tmdb_client
