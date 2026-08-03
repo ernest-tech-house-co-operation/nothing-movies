@@ -1,4 +1,4 @@
-find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core Network WebSockets)
 
 add_library(scraper_core STATIC
     src/scraper_core.cpp
@@ -6,14 +6,8 @@ add_library(scraper_core STATIC
 )
 
 target_include_directories(scraper_core PUBLIC include)
-target_link_libraries(scraper_core PUBLIC vendor_updater Qt6::Core)
+target_link_libraries(scraper_core PUBLIC vendor_updater Qt6::Core Qt6::Network Qt6::WebSockets)
 
-# Ship the Node runner alongside the app binary
-add_custom_command(
-    TARGET scraper_core POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/scripts
-    COMMAND ${CMAKE_COMMAND} -E copy
-        ${CMAKE_CURRENT_SOURCE_DIR}/scripts/piggy_runner.js
-        ${CMAKE_BINARY_DIR}/scripts/piggy_runner.js
-    COMMENT "Copying piggy_runner.js to build directory"
-)
+# No more Node runner to ship - scraper_core talks to the Nothing Browser
+# daemon's WebSocket protocol directly. If you still have a build directory
+# from before this change, its stale scripts/piggy_runner.js can be removed.

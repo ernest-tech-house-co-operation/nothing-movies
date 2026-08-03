@@ -1,58 +1,77 @@
 #pragma once
 #include <QObject>
 #include <QProcess>
+#include <QWebSocket>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMap>
+#include <QString>
 
 namespace scraper_core {
 
 // True if the Nothing Browser binary is installed (checked via vendor_updater's
-// install location), independent of whether Node/the runner script are set up.
+// install location), independent of whether it's currently running.
 bool isAvailable();
 
-// NothingBrowser now talks to a persistent Node process (piggy_runner.js)
-// instead of reimplementing Nothing Browser's socket protocol directly.
-// piggy_runner.js uses the real, tested `nothing-browser` npm client
-// underneath, so scraper_core no longer has to guess reply shapes, tab
-// routing, or command names — it just forwards { site, method, args }
-// and gets { ok, data } back.
+// NothingBrowser talks directly to the Nothing Browser daemon over its
+// WebSocket protocol (ws://host:2005, one JSON object per text frame).
+// No Node.js, no bundled JS client — this is a straight Qt/C++ client for
+// the wire protocol described in Nothing Browser's docs.
 //
-// Source plugins never see any of this — they only ever call the public
-// methods below (start/registerSite/call/shutdown), same as before.
+// Source plugins never see the socket — they only ever call the public
+// methods below (start/registerSite/call/shutdown), same shape as before,
+// just re-plumbed under the hood.
 class NothingBrowser : public QObject {
     Q_OBJECT
 public:
     explicit NothingBrowser(QObject* parent = nullptr);
     ~NothingBrowser() override;
 
-    // Spawns the Node runner and launches Nothing Browser itself.
-    // Default opts match piggy.launch({ mode: "tab", binary: "headless" }).
-    bool start(const QJsonObject& launchOpts = QJsonObject{{"mode", "tab"}, {"binary", "headless"}});
+    // Connects to an already-running daemon if one is listening on
+    // host:port, otherwise spawns the vendored binary and connects once
+    // it comes up. `key` is only needed if the target daemon was started
+    // with connection-key auth enabled.
+    bool start(const QString& host = "127.0.0.1", quint16 port = 2005,
+               const QString& key = QString());
 
-    // Cleanly closes piggy and terminates the runner process.
+    // Closes just this client's own tabs/connection (maps to the "close"
+    // command) — does not kill a shared daemon other clients are using.
     void shutdown();
 
-    // Equivalent to piggy.register(name, url) in JS.
+    // Opens a new tab, navigates it to `url`, and remembers the resulting
+    // tabId under `name` for later call(name, ...) lookups.
     bool registerSite(const QString& name, const QString& url);
 
-    // Calls a method on a registered site, e.g.:
-    //   call("animecloud", "navigate", {url})
-    //   call("animecloud", "provide.attr", {selector, attr})
-    //   call("animecloud", "session.export")
-    // Method names and argument order match site.js exactly — see
-    // nothing-browser's site.js for the full list of supported methods.
-    QJsonObject call(const QString& site, const QString& method,
-                      const QJsonArray& args = {}, int timeoutMs = 15000);
+    // Sends `cmd` with `payload` against the tab registered as `site`.
+    // `payload` should NOT include "tabId" - it's injected automatically.
+    // e.g. call("animecloud", "provide.attr", {{"selector","h1"},{"attr","data-id"}})
+    QJsonObject call(const QString& site, const QString& cmd,
+                      const QJsonObject& payload = {}, int timeoutMs = 15000);
+
+    // Raw escape hatch for commands that aren't tab-scoped (proxy.*,
+    // tab.new, shutdown, ...) or when you already have a tabId in hand.
+    QJsonObject sendRaw(const QString& cmd, const QJsonObject& payload = {}, int timeoutMs = 15000);
+
+    bool isConnected() const;
+
+signals:
+    // Passthrough for unsolicited server events (section 4 of the protocol
+    // doc): navigate/dialog/exposed_call are tab-scoped, proxy:* are global.
+    void eventReceived(const QString& eventName, const QJsonObject& fullEvent);
 
 private:
-    QJsonObject send(const QString& action, QJsonObject payload, int timeoutMs);
-    void onReadyRead();
-    QString runnerScriptPath() const;
+    void onTextMessageReceived(const QString& message);
+    void onConnected();
+    QString runnerBinaryPath() const;
+    bool waitForDaemon(int timeoutMs);
 
-    QProcess m_process;
-    QByteArray m_buffer;
-    QMap<QString, QJsonObject> m_pendingReplies;
+    QWebSocket m_ws;
+    QProcess m_daemonProcess;   // only used if we had to spawn our own copy
+    bool m_ownsDaemon = false;
+    bool m_connected = false;
+
+    QMap<QString, QJsonObject> m_pendingReplies; // request id -> reply
+    QMap<QString, QString> m_siteTabs;           // site name -> tabId
 };
 
 }

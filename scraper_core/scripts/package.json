@@ -1,7 +1,0 @@
-{
-  "name": "piggy-runner",
-  "private": true,
-  "dependencies": {
-    "nothing-browser": "^0.2.1"
-  }
-}
