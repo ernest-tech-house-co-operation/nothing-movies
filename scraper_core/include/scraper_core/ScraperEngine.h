@@ -3,9 +3,8 @@
 #include <QProcess>
 #include <QWebSocket>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QMap>
 #include <QString>
+#include <QMap>
 
 namespace scraper_core {
 
@@ -13,14 +12,12 @@ namespace scraper_core {
 // install location), independent of whether it's currently running.
 bool isAvailable();
 
-// NothingBrowser talks directly to the Nothing Browser daemon over its
-// WebSocket protocol (ws://host:2005, one JSON object per text frame).
-// No Node.js, no bundled JS client — this is a straight Qt/C++ client for
-// the wire protocol described in Nothing Browser's docs.
-//
-// Source plugins never see the socket — they only ever call the public
-// methods below (start/registerSite/call/shutdown), same shape as before,
-// just re-plumbed under the hood.
+// scraper_core's whole job: launch the Nothing Browser daemon, know whether
+// it's up, keep it alive for the lifetime of the app, and expose the raw
+// wire protocol (tab.new + sendRaw) so movie_source plugins can drive their
+// own tabs directly. Everything past "give me a tabId and let me send
+// commands" is the plugin's own problem — this class does not know or care
+// what any plugin does with a tab.
 class NothingBrowser : public QObject {
     Q_OBJECT
 public:
@@ -29,49 +26,56 @@ public:
 
     // Connects to an already-running daemon if one is listening on
     // host:port, otherwise spawns the vendored binary and connects once
-    // it comes up. `key` is only needed if the target daemon was started
-    // with connection-key auth enabled.
+    // it comes up. `key` is only needed if the target daemon requires
+    // connection-key auth.
     bool start(const QString& host = "127.0.0.1", quint16 port = 2005,
                const QString& key = QString());
 
-    // Closes just this client's own tabs/connection (maps to the "close"
-    // command) — does not kill a shared daemon other clients are using.
+    // Real, intentional teardown — call this once, when the app itself is
+    // exiting. Disarms the watchdog first so the shutdown isn't mistaken
+    // for a crash and "helpfully" un-done.
     void shutdown();
-
-    // Opens a new tab, navigates it to `url`, and remembers the resulting
-    // tabId under `name` for later call(name, ...) lookups.
-    bool registerSite(const QString& name, const QString& url);
-
-    // Sends `cmd` with `payload` against the tab registered as `site`.
-    // `payload` should NOT include "tabId" - it's injected automatically.
-    // e.g. call("animecloud", "provide.attr", {{"selector","h1"},{"attr","data-id"}})
-    QJsonObject call(const QString& site, const QString& cmd,
-                      const QJsonObject& payload = {}, int timeoutMs = 15000);
-
-    // Raw escape hatch for commands that aren't tab-scoped (proxy.*,
-    // tab.new, shutdown, ...) or when you already have a tabId in hand.
-    QJsonObject sendRaw(const QString& cmd, const QJsonObject& payload = {}, int timeoutMs = 15000);
 
     bool isConnected() const;
 
+    // The only two primitives a plugin needs:
+    //   tabId = engine->sendRaw("tab.new").value("data").toString();
+    //   engine->sendRaw("navigate", {{"tabId", tabId}, {"url", url}});
+    QJsonObject sendRaw(const QString& cmd, const QJsonObject& payload = {}, int timeoutMs = 15000);
+
 signals:
-    // Passthrough for unsolicited server events (section 4 of the protocol
-    // doc): navigate/dialog/exposed_call are tab-scoped, proxy:* are global.
+    // Passthrough for unsolicited server events (navigate/dialog/exposed_call
+    // are tab-scoped and only sent to the owning connection; proxy:* are
+    // global). Plugins can hook this if they care about async stuff like
+    // dialogs popping up on their tab.
     void eventReceived(const QString& eventName, const QJsonObject& fullEvent);
 
+    // Fired when the daemon connection drops for any reason OTHER than our
+    // own shutdown() being called — i.e. it crashed, or something else
+    // killed it. By the time this fires, the watchdog has already
+    // respawned/reconnected. Any tabIds a plugin was holding are gone —
+    // this is the plugin's cue to re-create whatever tabs it needs.
+    void daemonRecovered();
+
 private:
+    bool connectOnce(int timeoutMs, const QString& host, quint16 port, const QString& key);
+    bool spawnAndConnect(const QString& host, quint16 port, const QString& key);
+    void onDisconnected();
     void onTextMessageReceived(const QString& message);
-    void onConnected();
-    QString runnerBinaryPath() const;
-    bool waitForDaemon(int timeoutMs);
+    QString daemonBinaryPath() const;
 
     QWebSocket m_ws;
-    QProcess m_daemonProcess;   // only used if we had to spawn our own copy
+    QProcess m_daemonProcess;
     bool m_ownsDaemon = false;
     bool m_connected = false;
+    bool m_intentionalShutdown = false;
+
+    // remembered for the watchdog's respawn attempts
+    QString m_host;
+    quint16 m_port = 2005;
+    QString m_key;
 
     QMap<QString, QJsonObject> m_pendingReplies; // request id -> reply
-    QMap<QString, QString> m_siteTabs;           // site name -> tabId
 };
 
 }

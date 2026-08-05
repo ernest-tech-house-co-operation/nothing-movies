@@ -12,10 +12,15 @@ All movie sources that need to scrape a website **must use Nothing Browser**
 and no other tool. No Playwright, no Puppeteer, no Python Selenium, no
 headless Chrome wrappers of any kind.
 
-**Why:** one engine means one thing to maintain. When a site changes its
-anti-bot behavior, the fix goes into Nothing Browser (or `scraper_core`)
+**Why:** one engine means one thing to maintain. When something about the
+underlying binary or protocol changes, the fix goes into `scraper_core`
 once and every source benefits automatically. If everyone used a different
 tool, every source would break independently and need separate fixes.
+
+**Do not write or ship any JS/TS/Python in your source module.** Everything
+your source needs to do should be reachable through the `scraper_core` API
+below. If it isn't, that's a gap in `scraper_core` — raise it, don't work
+around it with a second tool.
 
 ---
 
@@ -24,78 +29,123 @@ tool, every source would break independently and need separate fixes.
 Not every source needs it. Ask yourself:
 
 - Does the site have a clean JSON/REST API I can hit with libcurl? → **no browser needed**
-- Does getting the stream URL require executing JavaScript, extracting cookies,
-  or submitting forms? → **Nothing Browser needed for that step only**
+- Does getting what you need require executing JavaScript in a real page
+  context, or interacting with the DOM? → **Nothing Browser needed for that step**
 
-A source can use libcurl for data (homepage, search, info) and Nothing Browser
-only for stream URL extraction. That's the recommended pattern — use the
-simplest tool that works for each step.
+A source can use libcurl for most of its data and Nothing Browser only for
+the specific steps that need a real browser. Use the simplest tool that
+works for each step — don't route everything through Nothing Browser by
+default just because it's available.
 
 ---
 
 ## The C++ interface — `scraper_core`
 
-Nothing Browser movie sources are written in **pure C++ against
-`scraper_core`'s API**. That is the only thing a source ever touches:
+`scraper_core` owns one thing: getting you a live, supervised connection to
+the Nothing Browser daemon, and letting you send it commands. It does not
+know what a "site" is, does not track tabs for you, and does not decide
+what commands to send or in what order — that's entirely your source
+module's job.
 
 ```cpp
 #include "scraper_core/ScraperEngine.h"
-
-scraper_core::NothingBrowser browser;
-browser.start();                                    // launches Nothing Browser
-browser.registerSite("mysite", "https://example.com");
-
-browser.call("mysite", "navigate", {"https://example.com/player/123"});
-
-QJsonObject reply = browser.call("mysite", "provide.attr",
-    {"form#wrapper input[name=csrftkn]", "value"});
-QString token = reply.value("data").toString();
-
-QJsonObject session = browser.call("mysite", "session.export");
-
-browser.shutdown();
 ```
 
-Method names passed to `call()` (`"navigate"`, `"provide.attr"`,
-`"session.export"`, etc.) match the Nothing Browser site API 1:1 — see
-`scraper_core/scripts/piggy_runner.js` for the authoritative list of what's
-callable and how arguments map.
+The engine object itself is owned elsewhere in the app and started once,
+early — your source module doesn't construct or `start()` it, it's handed
+a reference to use.
 
-**Do not write or ship any JS/TS/Python in your source module.** If a method
-you need isn't reachable through `browser.call(...)`, that's a `scraper_core`
-gap — fix it there, don't work around it in your plugin.
+### `scraper_core::isAvailable()`
 
----
-
-## Implementation note: how `scraper_core` talks to Nothing Browser
-
-This section is here so contributors understand the architecture — you
-don't need any of this to *write* a source, only if you're modifying
-`scraper_core` itself.
-
-Nothing Browser's actual wire protocol (tab lifecycle, message framing,
-event vs. reply vs. error shapes) is non-trivial and is already correctly
-implemented and tested in the official `nothing-browser` npm client
-library. Rather than re-deriving that protocol by hand in C++ — which
-drifts out of sync with the real binary and is very easy to get subtly
-wrong — `scraper_core::NothingBrowser` spawns a small, persistent Node
-process (`scraper_core/scripts/piggy_runner.js`) that uses the real
-`nothing-browser` client internally, and talks to it over a simple
-JSON-lines protocol on stdin/stdout:
-
-```
-C++ (scraper_core)  <-- JSON lines over stdin/stdout -->  piggy_runner.js  <-- real protocol -->  Nothing Browser binary
+```cpp
+bool isAvailable();
 ```
 
-This is an internal implementation detail of `scraper_core` only.
-Source plugins never see `piggy_runner.js`, never spawn Node themselves,
-and never send raw JSON commands — they call `browser.call(site, method,
-args)` and get a `QJsonObject` back, same as always.
+Returns `true` if the Nothing Browser binary is installed. Check this in
+your source's `init()` and fail gracefully if it's `false`:
 
-**Runtime requirement:** because of this, machines running Nothing Movies
-now need Node.js available on `PATH` in addition to the Nothing Browser
-binary. Document this alongside the Nothing Browser install step (see
-below).
+```cpp
+bool MySource::init() {
+    if (!scraper_core::isAvailable()) {
+        std::cerr << "[my_source] Nothing Browser not found — unavailable\n";
+        return false;
+    }
+    return true;
+}
+```
+
+### `NothingBrowser::sendRaw(cmd, payload, timeoutMs)`
+
+```cpp
+QJsonObject sendRaw(const QString& cmd,
+                     const QJsonObject& payload = {},
+                     int timeoutMs = 15000);
+```
+
+This is the only function that actually does anything, and the only one
+your source calls directly. It sends `cmd` with `payload` to the daemon and
+blocks until the reply comes back (or times out), returning:
+
+```json
+{ "id": "...", "ok": true, "data": <command-specific result> }
+```
+
+or on failure:
+
+```json
+{ "id": "...", "ok": false, "data": "<error description>" }
+```
+
+Always check `.value("ok").toBool()` before trusting `.value("data")`.
+
+There's no translation layer — whatever commands the Nothing Browser daemon
+documents are exactly what you pass as `cmd`, with whatever payload fields
+it expects. `scraper_core` doesn't validate or reshape them.
+
+Nothing Browser's wire protocol (informally, "the Piggy Protocol") — every
+command name, its payload shape, and what it returns — is documented here:
+
+> https://github.com/ernest-tech-house-co-operation/nothing-browser/blob/main/PROTOCOL.md
+
+That doc is the authoritative command reference. If you're not sure what a
+command expects or returns, that's where to look — not this guide.
+
+### Tabs are yours to manage
+
+There's no `registerSite` or site registry. You open your own tab and keep
+the id yourself:
+
+```cpp
+QJsonObject tabReply = engine->sendRaw("tab.new");
+QString tabId = tabReply.value("data").toString();
+
+// tabId is now yours — pass it in the payload of whatever commands you send
+engine->sendRaw("navigate", {{"tabId", tabId}, {"url", someUrl}});
+
+// close it when you're done
+engine->sendRaw("tab.close", {{"tabId", tabId}});
+```
+
+### `daemonRecovered` signal
+
+```cpp
+void daemonRecovered();
+```
+
+`scraper_core` runs a watchdog: if the daemon connection drops unexpectedly
+(crash, external kill, etc.), it auto-reconnects or respawns the daemon on
+its own. When that happens, **any tabId your source was holding is now
+invalid**. Connect to this signal if your source needs to be robust across
+a mid-session daemon restart — it's your cue to open a fresh tab and
+recover your own state, however makes sense for what you were doing.
+
+### What your source is responsible for
+
+Everything past "open a tab, send commands, read replies" is up to you:
+which commands to send, in what sequence, what selectors or page
+interactions your target needs, how to interpret the results, and how to
+handle that specific site's behavior. `scraper_core` deliberately has no
+opinion on any of it.
 
 ---
 
@@ -109,32 +159,14 @@ Nothing Browser binary is **never bundled in the Nothing Movies app binary**.
   ```bash
   curl -L https://github.com/BunElysiaReact/nothing-browser/releases/latest/download/nothing-browser-linux-x86_64.tar.gz | tar -xz -C ~/.local/bin
   ```
-- **Node.js + the runner's dependencies** must also be present at runtime:
-  ```bash
-  cd scraper_core/scripts
-  npm install
-  ```
-  This installs the `nothing-browser` npm client that `piggy_runner.js`
-  depends on. `node_modules/` here is git-ignored and must be installed
-  locally / as part of your packaging step — it is never committed.
 - **Auto-update:** `vendor_updater` keeps the Nothing Browser binary current.
   Wire your source's vendor target the same way `scraper_core` does — point
   it at the Nothing Browser GitHub releases and let the updater handle the
-  rest. (The `piggy_runner.js` npm dependency is versioned via
-  `scraper_core/scripts/package.json` instead.)
+  rest.
 
 Your source's `init()` should verify Nothing Browser exists before
-attempting to use it, and fail gracefully with a clear error if it doesn't:
-
-```cpp
-bool AnimeCloudProvider::init() {
-    if (!scraper_core::isAvailable()) {
-        std::cerr << "[movie_source2] Nothing Browser not found — stream extraction unavailable\n";
-        return false;
-    }
-    return true;
-}
-```
+attempting to use it, and fail gracefully with a clear error if it doesn't
+(see the `isAvailable()` example above).
 
 ---
 
@@ -150,7 +182,7 @@ movie_source2/
 ```
 
 Nothing changes here from before — `scraper_core` absorbs all the
-complexity described above. Your source's CMakeLists just links it:
+transport complexity described above. Your source's CMakeLists just links it:
 
 ```cmake
 find_package(CURL REQUIRED)
@@ -176,47 +208,6 @@ add_custom_command(
 
 ---
 
-## Example: AnimeCloud (movie_source2) flow
-
-### Data flow (no browser needed)
-
-```
-getHomepage()
-  → POST /api.v1.anime.AnimeService/ListAnimesByViewCount {"page": 1}
-  → parse JSON → vector<HomepageItem>
-
-search(query)
-  → POST /api.v1.AnimeSearchService/SearchAnimes {"q": "query"}
-  → parse JSON → vector<MediaResult>
-
-getMediaInfo(id)
-  → POST /api.v1.anime.AnimeService/GetAnime {"slug": id}
-  → parse JSON → MediaInfo with title, poster, synopsis, genres
-  → for each season/episode:
-      POST /api.v1.anime.AnimeService/GetEpisode {"slug", "season", "episode"}
-      → extract episode links
-  → return MediaInfo with full episode list
-```
-
-### Stream URL extraction (Nothing Browser needed)
-
-```
-getStreamUrl(id)
-  → browser.start()
-  → browser.registerSite(siteName, baseUrl)
-  → browser.call(siteName, "navigate", {baseUrl + "/proxy/player/" + id})
-  → browser.call(siteName, "provide.attr",
-                  {"form#wrapper input[name=csrftkn]", "value"})
-      → csrfToken = reply.data
-  → browser.call(siteName, "navigate",
-                  {baseUrl + "/proxy/player/" + id + "?csrftkn=" + csrfToken})
-  → browser.call(siteName, "session.export")
-      → sessionCookie = reply.data
-  → return baseUrl + "/proxy/nocache/" + id + "/" with Cookie header
-```
-
----
-
 ## What goes in `info.json` for a Nothing Browser source
 
 Same format as any other source — using Nothing Browser internally is an
@@ -224,9 +215,9 @@ implementation detail, the manifest just describes capabilities:
 
 ```json
 {
-  "name": "AnimeCloud",
+  "name": "MySource",
   "version": "1.0.0",
-  "profilePicture": "https://fireani.me/favicon.ico",
+  "profilePicture": "https://example.com/favicon.ico",
   "hasHomepage": true,
   "hasPoster": true,
   "hasRating": true,
@@ -260,9 +251,7 @@ Everything in Part 1 and Part 2 applies, plus:
 - [ ] Uses `scraper_core::NothingBrowser` — no other scraping tool, no JS/TS/Python in the module itself
 - [ ] `init()` checks for Nothing Browser availability and fails gracefully
 - [ ] External binary wired to `vendor_updater` — not bundled
-- [ ] Tested with Nothing Browser **and** Node.js installed, plus
-      `scraper_core/scripts/npm install` run at least once
-- [ ] Stream URL extraction tested and confirmed working
+- [ ] Handles `daemonRecovered` sensibly if the source holds long-lived tab state
 - [ ] Nothing Browser version requirement documented in the PR
 
 ---
@@ -271,7 +260,5 @@ Everything in Part 1 and Part 2 applies, plus:
 
 Part 4 will cover:
 - Windows + Linux cross-platform build checklist for Nothing Browser sources
-  (including the Node.js runtime requirement)
-- How to document selector/method changes when a site or `piggy_runner.js` updates
 - The `vendor_updater` integration in detail
 - Submitting a PR with a Nothing Browser source

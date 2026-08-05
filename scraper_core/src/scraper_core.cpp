@@ -5,7 +5,6 @@
 #include <QJsonDocument>
 #include <QEventLoop>
 #include <QTimer>
-#include <QDeadlineTimer>
 #include <QUuid>
 #include <QUrl>
 #include <QNetworkRequest>
@@ -13,7 +12,7 @@
 
 namespace scraper_core {
 
-QString runnerBinaryPathImpl() {
+static QString daemonBinaryPathImpl() {
     QDir installRoot(QCoreApplication::applicationDirPath());
 #if defined(_WIN32)
     return installRoot.filePath("nothing/nothing-browser.exe");
@@ -23,13 +22,14 @@ QString runnerBinaryPathImpl() {
 }
 
 bool isAvailable() {
-    return QFileInfo::exists(runnerBinaryPathImpl());
+    return QFileInfo::exists(daemonBinaryPathImpl());
 }
 
 NothingBrowser::NothingBrowser(QObject* parent) : QObject(parent) {
     connect(&m_ws, &QWebSocket::textMessageReceived,
             this, &NothingBrowser::onTextMessageReceived);
-    connect(&m_ws, &QWebSocket::connected, this, &NothingBrowser::onConnected);
+    connect(&m_ws, &QWebSocket::disconnected,
+            this, &NothingBrowser::onDisconnected);
 
     connect(&m_daemonProcess, &QProcess::readyReadStandardError, this, [this]() {
         std::cerr << "[scraper_core] daemon stderr: "
@@ -39,21 +39,11 @@ NothingBrowser::NothingBrowser(QObject* parent) : QObject(parent) {
 
 NothingBrowser::~NothingBrowser() { shutdown(); }
 
-QString NothingBrowser::runnerBinaryPath() const { return runnerBinaryPathImpl(); }
-
-void NothingBrowser::onConnected() { m_connected = true; }
+QString NothingBrowser::daemonBinaryPath() const { return daemonBinaryPathImpl(); }
 
 bool NothingBrowser::isConnected() const { return m_connected; }
 
-bool NothingBrowser::waitForDaemon(int timeoutMs) {
-    QDeadlineTimer deadline(timeoutMs);
-    QEventLoop loop;
-    QTimer::singleShot(qMin(timeoutMs, 200), &loop, &QEventLoop::quit);
-    loop.exec();
-    return !deadline.hasExpired();
-}
-
-bool NothingBrowser::start(const QString& host, quint16 port, const QString& key) {
+bool NothingBrowser::connectOnce(int timeoutMs, const QString& host, quint16 port, const QString& key) {
     QUrl url;
     url.setScheme("ws");
     url.setHost(host);
@@ -64,36 +54,36 @@ bool NothingBrowser::start(const QString& host, quint16 port, const QString& key
         req.setRawHeader("X-Piggy-Key", key.toUtf8());
     }
 
-    auto attemptConnect = [&](int timeoutMs) -> bool {
-        QEventLoop loop;
-        QTimer timeoutTimer;
-        timeoutTimer.setSingleShot(true);
-        bool ok = false;
-        auto onOk = connect(&m_ws, &QWebSocket::connected, &loop, [&]() { ok = true; loop.quit(); });
-        auto onErr = connect(&m_ws, &QWebSocket::errorOccurred, &loop, [&](QAbstractSocket::SocketError) { loop.quit(); });
-        connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-        m_ws.open(req);
-        timeoutTimer.start(timeoutMs);
-        loop.exec();
-        disconnect(onOk);
-        disconnect(onErr);
-        return ok;
-    };
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    bool ok = false;
+    auto onOk = connect(&m_ws, &QWebSocket::connected, &loop, [&]() { ok = true; loop.quit(); });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    auto onErr = connect(&m_ws, &QWebSocket::errorOccurred, &loop, [&](QAbstractSocket::SocketError) { loop.quit(); });
+#else
+    auto onErr = connect(&m_ws, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+                          &loop, [&](QAbstractSocket::SocketError) { loop.quit(); });
+#endif
+    connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    m_ws.open(req);
+    timeoutTimer.start(timeoutMs);
+    loop.exec();
+    disconnect(onOk);
+    disconnect(onErr);
 
-    // 1. Try joining an already-running (possibly shared) daemon first.
-    if (attemptConnect(1500)) {
-        m_ownsDaemon = false;
-        return true;
-    }
+    if (ok) m_connected = true;
+    return ok;
+}
 
-    // 2. Nothing listening — spawn our own copy of the vendored binary.
+bool NothingBrowser::spawnAndConnect(const QString& host, quint16 port, const QString& key) {
     if (!isAvailable()) {
         std::cerr << "[scraper_core] Nothing Browser binary not found at "
-                   << runnerBinaryPath().toStdString() << "\n";
+                   << daemonBinaryPath().toStdString() << "\n";
         return false;
     }
 
-    m_daemonProcess.setProgram(runnerBinaryPath());
+    m_daemonProcess.setProgram(daemonBinaryPath());
     m_daemonProcess.setArguments({"--headless"});
     m_daemonProcess.start();
     if (!m_daemonProcess.waitForStarted(5000)) {
@@ -101,13 +91,14 @@ bool NothingBrowser::start(const QString& host, quint16 port, const QString& key
         return false;
     }
 
-    // 3. Retry-connect a few times while it boots and opens the socket.
     for (int i = 0; i < 10; ++i) {
-        if (attemptConnect(1000)) {
+        if (connectOnce(1000, host, port, key)) {
             m_ownsDaemon = true;
             return true;
         }
-        waitForDaemon(300);
+        QEventLoop wait;
+        QTimer::singleShot(300, &wait, &QEventLoop::quit);
+        wait.exec();
     }
 
     std::cerr << "[scraper_core] daemon spawned but never accepted a connection on "
@@ -116,10 +107,27 @@ bool NothingBrowser::start(const QString& host, quint16 port, const QString& key
     return false;
 }
 
+bool NothingBrowser::start(const QString& host, quint16 port, const QString& key) {
+    m_host = host;
+    m_port = port;
+    m_key = key;
+    m_intentionalShutdown = false;
+
+    // 1. Try joining an already-running (possibly shared) daemon first.
+    if (connectOnce(1500, host, port, key)) {
+        m_ownsDaemon = false;
+        return true;
+    }
+
+    // 2. Nothing listening — spawn our own copy and become responsible
+    //    for keeping it alive (the watchdog only respawns daemons we own).
+    return spawnAndConnect(host, port, key);
+}
+
 void NothingBrowser::shutdown() {
+    m_intentionalShutdown = true; // disarm the watchdog before we tear anything down
+
     if (m_connected) {
-        // If we spawned this daemon privately, fully kill it. If we just
-        // joined a shared one, only tear down our own tabs/connection.
         sendRaw(m_ownsDaemon ? "shutdown" : "close", {}, 3000);
         m_ws.close();
         m_connected = false;
@@ -131,37 +139,42 @@ void NothingBrowser::shutdown() {
     }
 }
 
-bool NothingBrowser::registerSite(const QString& name, const QString& url) {
-    QJsonObject tabReply = sendRaw("tab.new");
-    if (!tabReply.value("ok").toBool(false)) {
-        std::cerr << "[scraper_core] tab.new failed for " << name.toStdString() << "\n";
-        return false;
-    }
-    const QString tabId = tabReply.value("data").toString();
-    if (tabId.isEmpty()) {
-        std::cerr << "[scraper_core] tab.new returned no tabId for " << name.toStdString() << "\n";
-        return false;
+void NothingBrowser::onDisconnected() {
+    m_connected = false;
+
+    if (m_intentionalShutdown) {
+        return; // this was us — nothing to recover from
     }
 
-    QJsonObject navReply = sendRaw("navigate", {{"tabId", tabId}, {"url", url}}, 30000);
-    if (!navReply.value("ok").toBool(false)) {
-        std::cerr << "[scraper_core] navigate failed for " << name.toStdString()
-                   << ": " << navReply.value("data").toString().toStdString() << "\n";
-        return false;
+    // The daemon went away without us asking it to (crash, someone else's
+    // stray `shutdown` on a shared instance, OOM-kill, whatever). If we're
+    // the one who's supposed to be keeping it alive, bring it back.
+    std::cerr << "[scraper_core] daemon connection lost unexpectedly — attempting recovery\n";
+
+    bool recovered = false;
+    if (m_ownsDaemon) {
+        // Our own copy died; respawn it fresh.
+        recovered = spawnAndConnect(m_host, m_port, m_key);
+    } else {
+        // We were only ever a guest on a shared daemon. It might still be
+        // alive for other clients and just dropped us, or it might be
+        // fully dead. Try a plain reconnect a few times; if that fails,
+        // fall back to spawning our own.
+        for (int i = 0; i < 5 && !recovered; ++i) {
+            recovered = connectOnce(1000, m_host, m_port, m_key);
+        }
+        if (!recovered) {
+            recovered = spawnAndConnect(m_host, m_port, m_key);
+        }
     }
 
-    m_siteTabs[name] = tabId;
-    return true;
-}
-
-QJsonObject NothingBrowser::call(const QString& site, const QString& cmd,
-                                  const QJsonObject& payload, int timeoutMs) {
-    if (!m_siteTabs.contains(site)) {
-        return QJsonObject{{"ok", false}, {"data", "unknown site: " + site + " (call registerSite first)"}};
+    if (recovered) {
+        // Old tabIds any plugin was holding are gone with the old daemon —
+        // that plugin needs to know to re-create them.
+        emit daemonRecovered();
+    } else {
+        std::cerr << "[scraper_core] recovery failed — daemon is unavailable\n";
     }
-    QJsonObject fullPayload = payload;
-    fullPayload["tabId"] = m_siteTabs.value(site);
-    return sendRaw(cmd, fullPayload, timeoutMs);
 }
 
 QJsonObject NothingBrowser::sendRaw(const QString& cmd, const QJsonObject& payload, int timeoutMs) {

@@ -1,33 +1,59 @@
 #pragma once
+
 #include "core/ISourceProvider.h"
+#include "scraper_core/ScraperEngine.h"
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
+#include <map>
+#include <memory>
+
+namespace scraper_core {
+    class ScraperEngine;
+}
 
 namespace movie_source2 {
 
-class AnimeCloudProvider : public core::ISourceProvider {
+using json = nlohmann::json;
+
+class AniworldProvider : public core::ISourceProvider {
 public:
-    AnimeCloudProvider() = default;
+    // Constructor now takes a pointer to the engine
+    explicit AniworldProvider(scraper_core::ScraperEngine* engine);
+    ~AniworldProvider() override = default;
 
-    // Not part of ISourceProvider (no init() there) — call this once
-    // after construction, same as movie_source1/3 presumably do in main.cpp.
-    bool init();
-
-    core::SourceCapabilities        getCapabilities() const override;
+    // ISourceProvider interface
+    core::SourceCapabilities getCapabilities() const override;
     std::vector<core::HomepageItem> getHomepage() override;
-    std::vector<core::MediaResult>  search(const std::string& query) override;
-    core::MediaInfo                 getMediaInfo(const std::string& id) override;
-    std::string                     getStreamUrl(const std::string& id) override;
-    std::vector<std::string>        getSubtitleUrls(const std::string& id) override;
+    core::MediaInfo getMediaInfo(const std::string& id) override;
+    std::string getStreamUrl(const std::string& id) override;
+    std::vector<core::MediaResult> search(const std::string& query) override;
+
+    void setToken(const std::string& token);
 
 private:
-    std::string m_baseUrl = "https://fireani.me";
-    std::string m_siteName = "animecloud"; // name used to register/address this site with Piggy
-    mutable core::SourceCapabilities m_capabilities;
-    mutable bool m_capabilitiesLoaded = false;
+    scraper_core::ScraperEngine* m_engine;
+    std::string m_token;
+    bool m_isSerienstream = false;
 
-    std::string httpPost(const std::string& endpoint, const std::string& jsonBody) const;
-    std::string dataFilePath(const std::string& filename) const;
+    // Browser helpers
+    std::string sendBrowserCommand(const std::string& cmd, const json& payload = {}, int timeoutMs = 15000);
+    json sendBrowserCommandJson(const std::string& cmd, const json& payload = {}, int timeoutMs = 15000);
+    std::string createTab();
+    void closeTab(const std::string& tabId);
+    std::string navigateAndWait(const std::string& tabId, const std::string& url);
+    std::string getPageContent(const std::string& tabId);
+    std::string executeScript(const std::string& tabId, const std::string& script);
+
+    // Site-specific parsing
+    std::vector<core::HomepageItem> parseHomepageFromBrowser(const std::string& tabId);
+    core::MediaInfo parseMediaInfoFromBrowser(const std::string& tabId, const std::string& url);
+    std::vector<core::MediaResult> parseSearchResultsFromBrowser(const std::string& tabId, const std::string& query);
+    std::string extractStreamUrlFromBrowser(const std::string& tabId, const std::string& episodeUrl);
+
+    // Constants
+    static constexpr const char* MAIN_URL = "https://aniworld.to";
+    static constexpr const char* SERIENSTREAM_URL = "https://serienstream.to";
 };
 
-}
+} // namespace movie_source2

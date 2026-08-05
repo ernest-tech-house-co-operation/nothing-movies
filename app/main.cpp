@@ -11,7 +11,7 @@
 #include "ui/MainWindow.h"
 #include "ui/TmdbBridge.h"
 #include "ui/SearchBridge.h"
-#include "ui/HomepageBridge.h"   // NEW
+#include "ui/HomepageBridge.h"
 #include "ui/AppController.h"
 #include "ui/QueueBridge.h"
 #include "vendor_updater/VendorUpdater.h"
@@ -19,7 +19,10 @@
 #include "queue_manager/queue_manager.h"
 #include "movie_source1/movie_source1.h"
 #include "movie_source3/movie_source3.h"
-#include "movie_source2/movie_source2.h"  
+#include "movie_source2/movie_source2.h"
+
+// --- NEW: Include scraper engine for plugin that needs it ---
+#include "scraper_core/ScraperEngine.h"
 
 namespace {
 
@@ -111,19 +114,23 @@ std::string resolveTmdbApiKey() {
 // To add a new source:
 //   1. #include "movie_sourceN/movie_sourceN.h" up top
 //   2. add ONE line below:
-//        aggregator->registerSource("Display Name", std::make_shared<ns::YourProvider>());
+//        aggregator->registerSource("Display Name", std::make_shared<ns::YourProvider>(engine));
+//   3. If your provider needs the Nothing Browser engine, pass it in the constructor.
 // That's it -- SearchAggregatorModule and SearchBridge handle the rest.
 //
 // Pass loadImages=false as a 3rd arg for a source you want to show as a
 // fast, poster-free list (skips TMDB matching entirely for its results):
 //   aggregator->registerSource("Some Source", std::make_shared<ns::Provider>(), /*loadImages=*/false);
 // ---------------------------------------------------------------------
-std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator() {
+std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator(scraper_core::ScraperEngine* engine) {
     auto aggregator = std::make_shared<search_aggregator::SearchAggregatorModule>();
 
+    // Existing sources
     aggregator->registerSource("Apibay (Torrent)", std::make_shared<movie_source1::ApibayProvider>());
-    aggregator->registerSource("AnimeCloud", std::make_shared<movie_source2::AnimeCloudProvider>());
     aggregator->registerSource("MockSource3", std::make_shared<movie_source3::MockSourceProvider>());
+
+    // --- NEW: Aniworld source with engine dependency ---
+    aggregator->registerSource("Aniworld", std::make_shared<movie_source2::AniworldProvider>(engine));
 
     return aggregator;
 }
@@ -161,12 +168,16 @@ int main(int argc, char* argv[]) {
                       "Trending/Upcoming carousels and search matching will fail to load\n";
     }
 
+    // --- NEW: Create and start the Nothing Browser engine ---
+    auto engine = std::make_shared<scraper_core::ScraperEngine>();
+    // If the engine requires explicit start, uncomment:
+    // engine->start();
+
+    // Pass the engine pointer to the aggregator builder
+    auto aggregator = buildSourceAggregator(engine.get());
+
     ui::TmdbBridge tmdbBridge(tmdbApiKey);
-
-    auto aggregator = buildSourceAggregator();
     ui::SearchBridge searchBridge(tmdbApiKey, aggregator);
-
-    // NEW: Create HomepageBridge
     ui::HomepageBridge homepageBridge(aggregator, &tmdbBridge);
 
     auto queueManager = std::make_shared<queue_manager::Queue_managerModule>();
@@ -175,7 +186,6 @@ int main(int argc, char* argv[]) {
     ui::AppController appController;
     ui::QueueBridge queueBridge(queueManager);
 
-    // Pass homepageBridge to MainWindow
     ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager, &homepageBridge);
     window.show();
     return app.exec();
