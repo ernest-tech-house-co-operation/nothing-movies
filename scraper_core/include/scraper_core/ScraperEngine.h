@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QString>
 #include <QMap>
+#include <memory>
+#include "vendor_updater/VendorUpdater.h"
 
 namespace scraper_core {
 
@@ -28,6 +30,13 @@ public:
     // host:port, otherwise spawns the vendored binary and connects once
     // it comes up. `key` is only needed if the target daemon requires
     // connection-key auth.
+    //
+    // Owns the entire vendor install/update lifecycle internally: if the
+    // binary isn't present yet, does a synchronous first-time fetch before
+    // attempting to spawn (so a fresh install doesn't race the background
+    // watcher), then keeps a periodic background update check running for
+    // the lifetime of this object. Callers (including main.cpp) don't
+    // need their own VendorUpdater instance.
     bool start(const QString& host = "127.0.0.1", quint16 port = 2005,
                const QString& key = QString());
 
@@ -63,12 +72,14 @@ private:
     void onDisconnected();
     void onTextMessageReceived(const QString& message);
     QString daemonBinaryPath() const;
+    QJsonObject sendRawOnOwningThread(const QString& cmd, const QJsonObject& payload, int timeoutMs);
 
     QWebSocket m_ws;
     QProcess m_daemonProcess;
     bool m_ownsDaemon = false;
     bool m_connected = false;
     bool m_intentionalShutdown = false;
+    bool m_recovering = false;
 
     // remembered for the watchdog's respawn attempts
     QString m_host;
@@ -76,6 +87,8 @@ private:
     QString m_key;
 
     QMap<QString, QJsonObject> m_pendingReplies; // request id -> reply
+
+    std::unique_ptr<vendor_updater::VendorUpdater> m_vendorUpdater;
 };
 
 }

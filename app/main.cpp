@@ -14,15 +14,19 @@
 #include "ui/HomepageBridge.h"
 #include "ui/AppController.h"
 #include "ui/QueueBridge.h"
-#include "vendor_updater/VendorUpdater.h"
 #include "search_aggregator/search_aggregator.h"
 #include "queue_manager/queue_manager.h"
 #include "movie_source1/movie_source1.h"
 #include "movie_source3/movie_source3.h"
 #include "movie_source2/movie_source2.h"
-
-// --- NEW: Include scraper engine for plugin that needs it ---
-#include "scraper_core/ScraperEngine.h"
+#include "scraper_core/ScraperEngine.h"   // for NothingBrowser and isAvailable
+// NOTE: vendor_updater/VendorUpdater.h is intentionally NOT included here
+// anymore. scraper_core owns the entire vendor install/update lifecycle
+// for the Nothing Browser binary internally now (see NothingBrowser::start()) -
+// this file used to construct its own separate VendorUpdater pointed at a
+// different directory ("vendor/nothing-browser", relative to cwd) than the
+// one scraper_core actually checks ("<appDir>/nothing"), which silently
+// diverged and caused the binary to never be found. One owner, one path.
 
 namespace {
 
@@ -69,8 +73,6 @@ std::map<std::string, std::string> parseEnvFile(const std::filesystem::path& pat
     return values;
 }
 
-// Checks .env next to the binary, then walks up from the binary dir looking
-// for a repo-root .env. Falls back to std::getenv("TMDB_API_KEY").
 std::string resolveTmdbApiKey() {
     std::vector<std::filesystem::path> candidates;
 
@@ -110,27 +112,13 @@ std::string resolveTmdbApiKey() {
 
 // ---------------------------------------------------------------------
 // Movie source registration.
-//
-// To add a new source:
-//   1. #include "movie_sourceN/movie_sourceN.h" up top
-//   2. add ONE line below:
-//        aggregator->registerSource("Display Name", std::make_shared<ns::YourProvider>(engine));
-//   3. If your provider needs the Nothing Browser engine, pass it in the constructor.
-// That's it -- SearchAggregatorModule and SearchBridge handle the rest.
-//
-// Pass loadImages=false as a 3rd arg for a source you want to show as a
-// fast, poster-free list (skips TMDB matching entirely for its results):
-//   aggregator->registerSource("Some Source", std::make_shared<ns::Provider>(), /*loadImages=*/false);
 // ---------------------------------------------------------------------
-std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator(scraper_core::ScraperEngine* engine) {
+std::shared_ptr<search_aggregator::SearchAggregatorModule> buildSourceAggregator(scraper_core::NothingBrowser* browser) {
     auto aggregator = std::make_shared<search_aggregator::SearchAggregatorModule>();
 
-    // Existing sources
     aggregator->registerSource("Apibay (Torrent)", std::make_shared<movie_source1::ApibayProvider>());
     aggregator->registerSource("MockSource3", std::make_shared<movie_source3::MockSourceProvider>());
-
-    // --- NEW: Aniworld source with engine dependency ---
-    aggregator->registerSource("Aniworld", std::make_shared<movie_source2::AniworldProvider>(engine));
+    aggregator->registerSource("Aniworld", std::make_shared<movie_source2::AniworldProvider>(browser));
 
     return aggregator;
 }
@@ -142,39 +130,23 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Nothing Movies - We have what? Everything.\n";
 
-#if defined(_WIN32)
-    static const std::string kPlatformTag = "windows";
-#else
-    static const std::string kPlatformTag = "linux";
-#endif
-
-    static vendor_updater::VendorUpdater updater(
-        "BunElysiaReact/nothing-browser",
-        "vendor/nothing-browser",
-        kPlatformTag
-    );
-
-    updater.startBackgroundWatch(6 * 3600, [](vendor_updater::UpdateResult r) {
-        if (!r.error.empty()) {
-            std::cerr << "[vendor_updater] error: " << r.error << "\n";
-        } else if (r.updated) {
-            std::cout << "[vendor_updater] updated " << r.oldTag << " -> " << r.newTag << "\n";
-        }
-    });
-
     const std::string tmdbApiKey = resolveTmdbApiKey();
     if (tmdbApiKey.empty()) {
         std::cerr << "[env] warning: TMDB_API_KEY not found (.env or process env) — "
                       "Trending/Upcoming carousels and search matching will fail to load\n";
     }
 
-    // --- NEW: Create and start the Nothing Browser engine ---
-    auto engine = std::make_shared<scraper_core::ScraperEngine>();
-    // If the engine requires explicit start, uncomment:
-    // engine->start();
+    // Create and start the Nothing Browser. This now also handles fetching
+    // and keeping the vendored binary up to date internally - no separate
+    // VendorUpdater needed here.
+    auto browser = std::make_shared<scraper_core::NothingBrowser>();
+    if (!browser->start()) {
+        std::cerr << "[scraper_core] Failed to start Nothing Browser!\n";
+    } else {
+        std::cout << "[scraper_core] Nothing Browser started successfully.\n";
+    }
 
-    // Pass the engine pointer to the aggregator builder
-    auto aggregator = buildSourceAggregator(engine.get());
+    auto aggregator = buildSourceAggregator(browser.get());
 
     ui::TmdbBridge tmdbBridge(tmdbApiKey);
     ui::SearchBridge searchBridge(tmdbApiKey, aggregator);

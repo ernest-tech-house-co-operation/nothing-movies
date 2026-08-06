@@ -7,13 +7,13 @@
 #include <QDebug>
 #include <regex>
 #include <sstream>
-#include <thread>   // for std::this_thread::sleep_for
+#include <thread>
 #include <chrono>
 
 namespace movie_source2 {
 
-// ---- Constructor with engine ----
-AniworldProvider::AniworldProvider(scraper_core::ScraperEngine* engine)
+// ---- Constructor ----
+AniworldProvider::AniworldProvider(scraper_core::NothingBrowser* engine)
     : m_engine(engine) {
     if (!scraper_core::isAvailable()) {
         qWarning() << "[Aniworld] Nothing Browser not available!";
@@ -51,8 +51,8 @@ core::SourceCapabilities AniworldProvider::getCapabilities() const {
 
 // ---- sendBrowserCommand ----
 std::string AniworldProvider::sendBrowserCommand(const std::string& cmd, const json& payload, int timeoutMs) {
-    if (!m_engine) {
-        qWarning() << "[Aniworld] No scraper engine available!";
+    if (!m_engine || !m_engine->isConnected()) {
+        qWarning() << "[Aniworld] No connected scraper engine!";
         return "";
     }
 
@@ -142,9 +142,13 @@ std::string AniworldProvider::getPageContent(const std::string& tabId) {
 }
 
 std::string AniworldProvider::executeScript(const std::string& tabId, const std::string& script) {
-    json result = sendBrowserCommandJson("page.evaluate", {
+    // Was "page.evaluate" with payload key "script" - neither exists in the
+    // Piggy protocol. The real command is "evaluate" (no "page." prefix,
+    // it sits alone in the DOM interaction group) and it reads the script
+    // from payload.js, not payload.script.
+    json result = sendBrowserCommandJson("evaluate", {
         {"tabId", tabId},
-        {"script", script}
+        {"js", script}
     });
 
     if (result.contains("data")) {
@@ -161,8 +165,8 @@ std::string AniworldProvider::executeScript(const std::string& tabId, const std:
 std::vector<core::HomepageItem> AniworldProvider::getHomepage() {
     std::vector<core::HomepageItem> results;
 
-    if (!scraper_core::isAvailable() || !m_engine) {
-        qWarning() << "[Aniworld] Cannot get homepage: Nothing Browser not available";
+    if (!scraper_core::isAvailable() || !m_engine || !m_engine->isConnected()) {
+        qWarning() << "[Aniworld] Cannot get homepage: Nothing Browser not available/connected";
         return results;
     }
 
@@ -226,8 +230,8 @@ std::vector<core::HomepageItem> AniworldProvider::getHomepage() {
 core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
     core::MediaInfo info;
 
-    if (!scraper_core::isAvailable() || !m_engine) {
-        qWarning() << "[Aniworld] Cannot get media info: Nothing Browser not available";
+    if (!scraper_core::isAvailable() || !m_engine || !m_engine->isConnected()) {
+        qWarning() << "[Aniworld] Cannot get media info: Nothing Browser not available/connected";
         return info;
     }
 
@@ -252,7 +256,6 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
         });
     )");
 
-    // Extract basic info and episodes
     std::string script = R"(
         (function() {
             const data = {};
@@ -277,7 +280,6 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
                     if (match) data.imdbId = match[1];
                 }
             }
-            // Collect episodes
             const episodes = [];
             document.querySelectorAll('tr.episode-row').forEach(row => {
                 let epNo = 0;
@@ -342,17 +344,15 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
                 }
             }
 
-            // Determine type: if episodes have season > 0 -> series, else movie
             bool isMovie = true;
             if (data.contains("episodes") && data["episodes"].is_array()) {
-                // Store episodes in info.episodes (assuming core::Episode exists)
                 for (const auto& ep : data["episodes"]) {
-                    core::Episode epInfo;
+                    core::MediaInfo::Episode epInfo;
                     epInfo.season = ep.value("season", 0);
                     epInfo.episode = ep.value("episode", 0);
                     epInfo.title = ep.value("title", "");
                     epInfo.streamUrl = ep.value("href", "");
-                    epInfo.posterUrl = ep.value("posterUrl", "");
+                    // synopsis not available; leave empty
                     info.episodes.push_back(epInfo);
                     if (ep.value("season", 0) > 0) isMovie = false;
                 }
@@ -369,8 +369,8 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
 
 // ---------- getStreamUrl ----------
 std::string AniworldProvider::getStreamUrl(const std::string& id) {
-    if (!scraper_core::isAvailable() || !m_engine) {
-        qWarning() << "[Aniworld] Cannot get stream: Nothing Browser not available";
+    if (!scraper_core::isAvailable() || !m_engine || !m_engine->isConnected()) {
+        qWarning() << "[Aniworld] Cannot get stream: Nothing Browser not available/connected";
         return "";
     }
 
@@ -395,7 +395,6 @@ std::string AniworldProvider::getStreamUrl(const std::string& id) {
         });
     )");
 
-    // Extract hoster links and try to get a playable URL
     std::string script = R"(
         (function() {
             const links = [];
@@ -503,8 +502,8 @@ std::string AniworldProvider::getStreamUrl(const std::string& id) {
 std::vector<core::MediaResult> AniworldProvider::search(const std::string& query) {
     std::vector<core::MediaResult> results;
 
-    if (!scraper_core::isAvailable() || !m_engine) {
-        qWarning() << "[Aniworld] Cannot search: Nothing Browser not available";
+    if (!scraper_core::isAvailable() || !m_engine || !m_engine->isConnected()) {
+        qWarning() << "[Aniworld] Cannot search: Nothing Browser not available/connected";
         return results;
     }
 
@@ -516,7 +515,6 @@ std::vector<core::MediaResult> AniworldProvider::search(const std::string& query
     }
 
     if (m_isSerienstream) {
-        // Serienstream GET search
         std::string searchUrl = std::string(SERIENSTREAM_URL) + "/suche?term=" + query;
         navigateAndWait(tabId, searchUrl);
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -552,7 +550,6 @@ std::vector<core::MediaResult> AniworldProvider::search(const std::string& query
             } catch (...) {}
         }
     } else {
-        // Aniworld POST search
         navigateAndWait(tabId, MAIN_URL);
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         std::string script = R"(
@@ -588,6 +585,11 @@ std::vector<core::MediaResult> AniworldProvider::search(const std::string& query
     }
 
     return results;
+}
+
+// ---------- getSubtitleUrls stub ----------
+std::vector<std::string> AniworldProvider::getSubtitleUrls(const std::string& /*id*/) {
+    return {};
 }
 
 } // namespace movie_source2

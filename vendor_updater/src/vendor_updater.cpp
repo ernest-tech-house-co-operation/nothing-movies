@@ -2,6 +2,7 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <zip.h>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,13 +39,80 @@ void VendorUpdater::writeLocalTag(const std::string& tag) const {
     f << tag;
 }
 
+static bool extractZip(const std::string& archivePath, const std::string& stagingDir) {
+    int err = 0;
+    zip_t* archive = zip_open(archivePath.c_str(), ZIP_RDONLY, &err);
+    if (!archive) return false;
+
+    zip_int64_t numEntries = zip_get_num_entries(archive, 0);
+    for (zip_int64_t i = 0; i < numEntries; ++i) {
+        const char* name = zip_get_name(archive, i, 0);
+        if (!name) continue;
+
+        fs::path outPath = fs::path(stagingDir) / name;
+        std::string nameStr(name);
+
+        if (!nameStr.empty() && nameStr.back() == '/') {
+            fs::create_directories(outPath);
+            continue;
+        }
+
+        fs::create_directories(outPath.parent_path());
+        zip_file_t* zf = zip_fopen_index(archive, i, 0);
+        if (!zf) continue;
+
+        std::ofstream out(outPath, std::ios::binary);
+        char buf[8192];
+        zip_int64_t bytesRead;
+        while ((bytesRead = zip_fread(zf, buf, sizeof(buf))) > 0) {
+            out.write(buf, bytesRead);
+        }
+        zip_fclose(zf);
+
+        // Release assets ship executables without exec bit set once
+        // extracted from an archive that didn't preserve it - libzip
+        // doesn't restore unix permissions from the zip's external
+        // attributes here, so make sure the binary is runnable.
+        fs::permissions(outPath,
+                         fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                             fs::perms::others_read | fs::perms::others_exec,
+                         fs::perm_options::add);
+    }
+    zip_close(archive);
+    return true;
+}
+
+static bool extractTarGz(const std::string& archivePath, const std::string& stagingDir) {
+    // No .tar.gz support existed here before - this silently produced an
+    // empty staging dir on every Linux release (the .zip branch never
+    // matched, and the downloaded archive was deleted right after this
+    // regardless of whether extraction happened). Shell out to system
+    // `tar`, same as the project's own documented install command.
+    //
+    // --strip-components=1: GitHub release tarballs wrap their contents in
+    // a top-level folder (e.g. "nothing-browser-headless-0.2.0-linux-x86_64/").
+    // Without stripping it, the binary ends up nested one level deeper than
+    // scraper_core expects (vendorDir_/<wrapper>/nothing-browser-headless
+    // instead of vendorDir_/nothing-browser-headless), so it's never found.
+    std::string cmd = "tar -xzf \"" + archivePath + "\" -C \"" + stagingDir + "\" --strip-components=1";
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        std::cerr << "[vendor_updater] tar extraction failed (exit " << rc << "): " << cmd << "\n";
+        return false;
+    }
+    return true;
+}
+
 UpdateResult VendorUpdater::checkAndUpdateOnce() {
     UpdateResult result{false, readLocalTag(), "", ""};
+    std::cout << "[vendor_updater] checking " << repo_
+               << " (local tag: " << (result.oldTag.empty() ? "<none>" : result.oldTag) << ")\n";
 
     CURL* curl = curl_easy_init();
     std::string body;
     if (curl) {
         std::string url = "https://api.github.com/repos/" + repo_ + "/releases/latest";
+        std::cout << "[vendor_updater] fetching release info: " << url << "\n";
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
@@ -52,6 +120,9 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "nothingmovies-updater/1.0");
         curl_easy_perform(curl);
         curl_easy_cleanup(curl);
+    } else {
+        result.error = "curl_easy_init failed";
+        return result;
     }
 
     json release;
@@ -64,14 +135,26 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
 
     std::string latestTag = release.value("tag_name", "");
     result.newTag = latestTag;
-    if (latestTag.empty() || latestTag == result.oldTag) return result;
+    std::cout << "[vendor_updater] latest release tag: "
+               << (latestTag.empty() ? "<none>" : latestTag) << "\n";
+
+    if (latestTag.empty() || latestTag == result.oldTag) {
+        std::cout << "[vendor_updater] already up to date (" << result.oldTag << ") — skipping fetch\n";
+        return result;
+    }
 
     std::string assetUrl, assetName;
     for (auto& asset : release["assets"]) {
         std::string name = asset.value("name", "");
         bool matchesPlatform = name.find(platformTag_) != std::string::npos;
+        // Full GUI, headful, and headless builds all share the same
+        // platform suffix (e.g. "-linux-x86_64.tar.gz") - platformTag_
+        // alone isn't enough to pick the right one, and the full GUI
+        // asset happens to be listed first in the release, so without
+        // this we'd silently grab the wrong binary every time.
+        bool isHeadless = name.find("headless") != std::string::npos;
         bool isArchive = name.ends_with(".zip") || name.ends_with(".tar.gz");
-        if (matchesPlatform && isArchive) {
+        if (matchesPlatform && isHeadless && isArchive) {
             assetUrl = asset.value("browser_download_url", "");
             assetName = name;
             break;
@@ -82,6 +165,8 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
         result.error = "No matching asset for platform: " + platformTag_;
         return result;
     }
+    std::cout << "[vendor_updater] matched asset: " << assetName << "\n";
+    std::cout << "[vendor_updater] downloading from: " << assetUrl << "\n";
 
     std::string stagingDir = vendorDir_ + "_staging";
     fs::remove_all(stagingDir);
@@ -104,45 +189,45 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
-        result.error = "Download failed";
+        result.error = std::string("Download failed: ") + curl_easy_strerror(res);
+        fs::remove_all(stagingDir);
         return result;
     }
 
+    std::error_code sizeEc;
+    auto downloadedBytes = fs::file_size(archivePath, sizeEc);
+    std::cout << "[vendor_updater] downloaded " << archivePath
+               << " (" << (sizeEc ? "unknown size" : std::to_string(downloadedBytes) + " bytes") << ")\n";
+
+    std::cout << "[vendor_updater] extracting " << assetName << " -> " << stagingDir << "\n";
+    bool extracted = false;
     if (assetName.ends_with(".zip")) {
-        int err = 0;
-        zip_t* archive = zip_open(archivePath.c_str(), ZIP_RDONLY, &err);
-        if (archive) {
-            zip_int64_t numEntries = zip_get_num_entries(archive, 0);
-            for (zip_int64_t i = 0; i < numEntries; ++i) {
-                const char* name = zip_get_name(archive, i, 0);
-                if (!name) continue;
-
-                fs::path outPath = fs::path(stagingDir) / name;
-                std::string nameStr(name);
-
-                if (!nameStr.empty() && nameStr.back() == '/') {
-                    fs::create_directories(outPath);
-                    continue;
-                }
-
-                fs::create_directories(outPath.parent_path());
-                zip_file_t* zf = zip_fopen_index(archive, i, 0);
-                if (!zf) continue;
-
-                std::ofstream out(outPath, std::ios::binary);
-                char buf[8192];
-                zip_int64_t bytesRead;
-                while ((bytesRead = zip_fread(zf, buf, sizeof(buf))) > 0) {
-                    out.write(buf, bytesRead);
-                }
-                zip_fclose(zf);
-            }
-            zip_close(archive);
-        }
+        extracted = extractZip(archivePath, stagingDir);
+    } else if (assetName.ends_with(".tar.gz")) {
+        extracted = extractTarGz(archivePath, stagingDir);
     }
+    std::cout << "[vendor_updater] extraction " << (extracted ? "succeeded" : "FAILED") << "\n";
+
+    std::cout << "[vendor_updater] deleting downloaded archive: " << archivePath << "\n";
     fs::remove(archivePath);
 
+    if (!extracted) {
+        result.error = "Failed to extract asset: " + assetName;
+        fs::remove_all(stagingDir);
+        return result;
+    }
+
+    // Sanity check: staging dir should actually have something in it now,
+    // not just be an empty folder that gets happily swapped into place.
+    if (fs::is_empty(stagingDir)) {
+        result.error = "Extraction produced no files: " + assetName;
+        std::cout << "[vendor_updater] staging dir is empty after extraction — aborting swap\n";
+        fs::remove_all(stagingDir);
+        return result;
+    }
+
     std::string backupDir = vendorDir_ + "_prev";
+    std::cout << "[vendor_updater] placing " << stagingDir << " -> " << vendorDir_ << "\n";
     fs::remove_all(backupDir);
     if (fs::exists(vendorDir_)) fs::rename(vendorDir_, backupDir);
     fs::rename(stagingDir, vendorDir_);
@@ -150,6 +235,7 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
     writeLocalTag(latestTag);
     fs::remove_all(backupDir);
 
+    std::cout << "[vendor_updater] done — now at " << latestTag << "\n";
     result.updated = true;
     return result;
 }
