@@ -9,6 +9,7 @@
 #include <sstream>
 #include <thread>
 #include <chrono>
+#include <atomic>
 
 namespace movie_source2 {
 
@@ -142,10 +143,15 @@ std::string AniworldProvider::getPageContent(const std::string& tabId) {
 }
 
 std::string AniworldProvider::executeScript(const std::string& tabId, const std::string& script) {
-    // Was "page.evaluate" with payload key "script" - neither exists in the
-    // Piggy protocol. The real command is "evaluate" (no "page." prefix,
-    // it sits alone in the DOM interaction group) and it reads the script
-    // from payload.js, not payload.script.
+    // Use ONLY for scripts whose outer expression is a plain (non-Promise)
+    // value - e.g. `(function(){ ... return JSON.stringify(x); })()`.
+    // `evaluate` reliably round-trips plain values but does NOT await a
+    // Promise (confirmed directly: `evaluate` with js:"Promise.resolve('hello')"
+    // returns {} while js:"'plain string'" returns correctly - and per the
+    // Nothing Browser devs, this is by design, not a bug: the caller is
+    // expected to do its own waiting, the same way their JS client library
+    // does, rather than relying on evaluate() to resolve a Promise for it).
+    // For anything that awaits/fetches, use executeAsyncScript() instead.
     json result = sendBrowserCommandJson("evaluate", {
         {"tabId", tabId},
         {"js", script}
@@ -158,6 +164,78 @@ std::string AniworldProvider::executeScript(const std::string& tabId, const std:
             return result["data"].dump();
         }
     }
+    return "";
+}
+
+std::string AniworldProvider::executeAsyncScript(const std::string& tabId, const std::string& script, int timeoutMs) {
+    // `script` should be an expression that evaluates to either a plain
+    // value or a Promise (e.g. an async IIFE using fetch/await). We never
+    // hand this Promise to `evaluate` directly. Instead:
+    //   1. Kick it off fire-and-forget: the injected wrapper `await`s it
+    //      INSIDE the page's own JS context (same contract the Nothing
+    //      Browser JS client uses) and stashes the outcome on a unique
+    //      window global. The kickoff script itself returns `true`
+    //      synchronously - a plain value, so `evaluate` returns cleanly.
+    //   2. Poll for that global via repeated plain-value `evaluate` calls
+    //      until it's populated or we time out.
+    static std::atomic<uint64_t> counter{0};
+    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::string key = "__piggy_res_" + std::to_string(++counter) + "_" + std::to_string(nowMs);
+
+    std::string kickoff =
+        "(function(){"
+        "  (async function(){"
+        "    try {"
+        "      var __r = await (" + script + ");"
+        "      window['" + key + "'] = JSON.stringify({ok:true, value:__r});"
+        "    } catch(e) {"
+        "      window['" + key + "'] = JSON.stringify({ok:false, error:String(e)});"
+        "    }"
+        "  })();"
+        "  return true;"
+        "})()";
+
+    executeScript(tabId, kickoff);
+
+    std::string pollScript =
+        "(function(){"
+        "  var v = window['" + key + "'];"
+        "  if (v === undefined) return null;"
+        "  delete window['" + key + "'];"
+        "  return v;"
+        "})()";
+
+    const int intervalMs = 100;
+    int waited = 0;
+    while (waited < timeoutMs) {
+        std::string result = executeScript(tabId, pollScript);
+        if (!result.empty() && result != "null") {
+            try {
+                json wrapper = json::parse(result);
+                if (!wrapper.value("ok", false)) {
+                    qWarning() << "[Aniworld] executeAsyncScript error:"
+                               << QString::fromStdString(wrapper.value("error", "unknown"));
+                    return "";
+                }
+                // Most of our scripts JSON.stringify() their own result
+                // before returning, so `value` is usually already a
+                // string. Handle both cases so callers keep parsing the
+                // returned std::string as JSON exactly as before.
+                if (wrapper["value"].is_string()) {
+                    return wrapper["value"].get<std::string>();
+                }
+                return wrapper["value"].dump();
+            } catch (const std::exception& e) {
+                qWarning() << "[Aniworld] Failed to parse executeAsyncScript poll result:" << e.what();
+                return "";
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+        waited += intervalMs;
+    }
+
+    qWarning() << "[Aniworld] executeAsyncScript timed out after" << timeoutMs << "ms for key" << QString::fromStdString(key);
     return "";
 }
 
@@ -179,12 +257,15 @@ std::vector<core::HomepageItem> AniworldProvider::getHomepage() {
     navigateAndWait(tabId, url);
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
-    executeScript(tabId, R"(
+    // Was fire-and-forget via executeScript(), which never actually waited
+    // for the Promise (evaluate doesn't resolve Promises) - it now really
+    // blocks until document.readyState is complete, via the poll loop.
+    executeAsyncScript(tabId, R"(
         new Promise((resolve) => {
-            if (document.readyState === 'complete') resolve();
-            else window.addEventListener('load', resolve);
-        });
-    )");
+            if (document.readyState === 'complete') resolve(true);
+            else window.addEventListener('load', () => resolve(true));
+        })
+    )", 10000);
 
     std::string script = R"(
         (function() {
@@ -196,7 +277,15 @@ std::vector<core::HomepageItem> AniworldProvider::getHomepage() {
                 if (!href) return;
                 const img = el.querySelector('img');
                 const title = img ? img.getAttribute('alt') : '';
-                const posterUrl = img ? (img.getAttribute('data-src') || img.getAttribute('src')) : '';
+                let posterUrl = img ? (img.getAttribute('data-src') || img.getAttribute('src')) : '';
+                // getAttribute() returns the raw HTML string, which can be
+                // a relative path (e.g. "/public/img/cover/x.png"). Resolve
+                // it against the page's own origin so QML always receives a
+                // full absolute URL instead of a path that gets misresolved
+                // relative to qrc:/qml/ once compiled into the binary.
+                if (posterUrl) {
+                    try { posterUrl = new URL(posterUrl, location.href).href; } catch (e) {}
+                }
                 const category = el.querySelector('.genre, .category')?.textContent?.trim() || '';
                 items.push({ id: href, title: title || 'Unknown', imageUrl: posterUrl, category: category });
             });
@@ -249,12 +338,12 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
     navigateAndWait(tabId, fullUrl);
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
-    executeScript(tabId, R"(
+    executeAsyncScript(tabId, R"(
         new Promise((resolve) => {
-            if (document.readyState === 'complete') resolve();
-            else window.addEventListener('load', resolve);
-        });
-    )");
+            if (document.readyState === 'complete') resolve(true);
+            else window.addEventListener('load', () => resolve(true));
+        })
+    )", 10000);
 
     std::string script = R"(
         (function() {
@@ -262,7 +351,11 @@ core::MediaInfo AniworldProvider::getMediaInfo(const std::string& id) {
             const titleEl = document.querySelector('.series-title span, .row h1');
             data.title = titleEl ? titleEl.textContent.trim() : '';
             const posterEl = document.querySelector('.seriesCoverBox img');
-            data.posterUrl = posterEl ? (posterEl.getAttribute('data-src') || posterEl.getAttribute('src')) : '';
+            let posterUrl = posterEl ? (posterEl.getAttribute('data-src') || posterEl.getAttribute('src')) : '';
+            if (posterUrl) {
+                try { posterUrl = new URL(posterUrl, location.href).href; } catch (e) {}
+            }
+            data.posterUrl = posterUrl;
             const descEl = document.querySelector('.seri_des, .description-text');
             data.synopsis = descEl ? descEl.textContent.trim() : '';
             const yearEl = document.querySelector('span[itemprop=startDate] a');
@@ -388,12 +481,12 @@ std::string AniworldProvider::getStreamUrl(const std::string& id) {
     navigateAndWait(tabId, fullUrl);
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
-    executeScript(tabId, R"(
+    executeAsyncScript(tabId, R"(
         new Promise((resolve) => {
-            if (document.readyState === 'complete') resolve();
-            else window.addEventListener('load', resolve);
-        });
-    )");
+            if (document.readyState === 'complete') resolve(true);
+            else window.addEventListener('load', () => resolve(true));
+        })
+    )", 10000);
 
     std::string script = R"(
         (function() {
@@ -428,18 +521,20 @@ std::string AniworldProvider::getStreamUrl(const std::string& id) {
             std::string url = link.value("url", "");
             if (url.empty()) continue;
 
-            // Follow redirect (manual fetch via browser)
-            std::string navigateScript = R"(
-                (async function() {
-                    try {
-                        const response = await fetch(')" + url + R"(', { method: 'GET', redirect: 'manual' });
-                        return response.headers.get('Location') || ')" + url + R"(';
-                    } catch(e) {
-                        return ')" + url + R"(';
-                    }
-                })();
-            )";
-            std::string redirectResult = executeScript(tabId, navigateScript);
+            // Follow redirect (manual fetch via browser). This is exactly
+            // the pattern that broke before: an async IIFE using fetch()
+            // whose Promise `evaluate` never resolved. Now routed through
+            // executeAsyncScript so the await happens for real.
+            std::string navigateScript =
+                "(async function() {"
+                "  try {"
+                "    const response = await fetch('" + url + "', { method: 'GET', redirect: 'manual' });"
+                "    return response.headers.get('Location') || '" + url + "';"
+                "  } catch(e) {"
+                "    return '" + url + "';"
+                "  }"
+                "})()";
+            std::string redirectResult = executeAsyncScript(tabId, navigateScript, 15000);
             if (redirectResult.empty()) continue;
 
             // If it's FileMoon, navigate and extract video source
@@ -529,7 +624,10 @@ std::vector<core::MediaResult> AniworldProvider::search(const std::string& query
                     if (!href) return;
                     const img = el.querySelector('img');
                     const title = img ? img.getAttribute('alt') : '';
-                    const posterUrl = img ? (img.getAttribute('data-src') || img.getAttribute('src')) : '';
+                    let posterUrl = img ? (img.getAttribute('data-src') || img.getAttribute('src')) : '';
+                    if (posterUrl) {
+                        try { posterUrl = new URL(posterUrl, location.href).href; } catch (e) {}
+                    }
                     results.push({ id: href, title: title || 'Unknown', posterUrl: posterUrl || '' });
                 });
                 return JSON.stringify(results);
@@ -552,22 +650,29 @@ std::vector<core::MediaResult> AniworldProvider::search(const std::string& query
     } else {
         navigateAndWait(tabId, MAIN_URL);
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        std::string script = R"(
-            (async function() {
-                const response = await fetch('/ajax/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-                    body: 'keyword=)" + query + R"('
-                });
-                const data = await response.json();
-                return JSON.stringify(data);
-            })();
-        )";
-        std::string result = executeScript(tabId, script);
+
+        // This was the actual bug: an async IIFE using fetch(), whose
+        // Promise result `evaluate` never resolved (returned {} instead of
+        // the fetch response). Routed through executeAsyncScript now, which
+        // never hands a Promise to evaluate() - it awaits inside the page
+        // and polls for the result via plain-value evaluate() calls.
+        std::string script =
+            "(async function() {"
+            "  const response = await fetch('/ajax/search', {"
+            "    method: 'POST',"
+            "    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },"
+            "    body: 'keyword=' + encodeURIComponent('" + query + "')"
+            "  });"
+            "  const text = await response.text();"
+            "  return JSON.stringify({ status: response.status, body: text });"
+            "})()";
+        std::string result = executeAsyncScript(tabId, script, 15000);
         closeTab(tabId);
         if (!result.empty()) {
             try {
-                json data = json::parse(result);
+                json wrapper = json::parse(result);
+                std::string bodyStr = wrapper.value("body", "");
+                json data = bodyStr.empty() ? json::array() : json::parse(bodyStr);
                 if (data.is_array()) {
                     for (const auto& item : data) {
                         std::string title = item.value("title", "");

@@ -88,6 +88,25 @@ Item {
                             anchors.rightMargin: 20
                             spacing: 16
 
+                            // Cover thumbnail — shows the sibling image if one was
+                            // found next to the video file, otherwise a plain
+                            // blank placeholder (no broken-image icon).
+                            Rectangle {
+                                Layout.preferredWidth: 48
+                                Layout.preferredHeight: 56
+                                radius: 6
+                                color: "#211a35"
+                                clip: true
+
+                                Image {
+                                    anchors.fill: parent
+                                    source: model.coverPath || ""
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    visible: model.coverPath && model.coverPath !== ""
+                                }
+                            }
+
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6

@@ -1,6 +1,7 @@
 #include "ui/QueueBridge.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QSet>
 
@@ -12,6 +13,28 @@ const QSet<QString>& videoExtensions() {
         "mp4", "mkv", "avi", "webm", "mov", "m4v", "ts", "flv", "wmv"
     };
     return exts;
+}
+
+const QSet<QString>& imageExtensions() {
+    static const QSet<QString> exts = {
+        "jpg", "jpeg", "png", "webp"
+    };
+    return exts;
+}
+
+// Looks for a poster/cover image sitting next to the video file (common
+// with torrent releases that ship a jpg/png alongside the video in the
+// same release folder). Returns a file:// URL QML can load directly, or
+// an empty string if nothing suitable is found.
+QString findSiblingCover(const QFileInfo& videoFile) {
+    QDir sameDir = videoFile.dir();
+    const auto siblings = sameDir.entryInfoList(QDir::Files, QDir::Name);
+    for (const QFileInfo& sibling : siblings) {
+        if (imageExtensions().contains(sibling.suffix().toLower())) {
+            return "file://" + sibling.canonicalFilePath();
+        }
+    }
+    return QString();
 }
 } // namespace
 
@@ -103,18 +126,26 @@ QVariantList QueueBridge::toVariantList() const {
         m["progress"]    = item.progress;
         m["filePath"]    = QString::fromStdString(item.filePath);
         m["readyToPlay"] = item.readyToPlay;
+        m["coverPath"]   = QString(); // live queue items don't carry a cover yet
         list.append(m);
 
         if (!item.filePath.empty())
             knownPaths.insert(QFileInfo(QString::fromStdString(item.filePath)).canonicalFilePath());
     }
 
-    // show finished downloads from previous sessions
+    // Show finished downloads from previous sessions. Scans the whole
+    // download folder RECURSIVELY, so releases that land inside their own
+    // subfolder (e.g. "Movie Name (2021) [1080p]/movie.file.mp4", which is
+    // how most torrent clients/trackers package things) are picked up too,
+    // not just files sitting loose at the top level.
     const QString folder = downloadFolder();
-    QDir dir(folder);
-    if (dir.exists()) {
-        const auto entries = dir.entryInfoList(QDir::Files, QDir::Time);
-        for (const QFileInfo& info : entries) {
+    QDir rootDir(folder);
+    if (rootDir.exists()) {
+        QDirIterator it(folder, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            const QFileInfo info = it.fileInfo();
+
             if (!videoExtensions().contains(info.suffix().toLower())) continue;
             if (knownPaths.contains(info.canonicalFilePath())) continue;
 
@@ -125,6 +156,9 @@ QVariantList QueueBridge::toVariantList() const {
             m["progress"]    = 1.0;
             m["filePath"]    = info.canonicalFilePath();
             m["readyToPlay"] = true;
+            // Empty string if no image sits next to the video — QML should
+            // show a blank/placeholder in that case, not a broken image.
+            m["coverPath"]   = findSiblingCover(info);
             list.append(m);
         }
     }
