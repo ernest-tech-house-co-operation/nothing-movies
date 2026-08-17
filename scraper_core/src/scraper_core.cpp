@@ -1,5 +1,5 @@
 #include "scraper_core/ScraperEngine.h"
-#include "vendor_updater/VendorUpdater.h"
+#include "vendor_updater/VendorManager.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -23,8 +23,24 @@ static std::string platformTag() {
 #endif
 }
 
-static QString vendorDirPath() {
+// The single "Nothing" folder every vendor tool lives under, for this app.
+// VendorManager::rootDir() defaults to a generic per-OS user-data path,
+// but THIS app's established convention (see main.cpp's comment on the
+// old divergence bug) is <appDir>/nothing specifically. We pin
+// VendorManager to that by setting NOTHINGMOVIES_VENDOR_ROOT once, early,
+// in main.cpp — before anything calls registerVendor(). This function
+// stays for isAvailable()/daemonBinaryPathImpl(), which need the same
+// path independent of VendorManager.
+static QString vendorRootPath() {
     return QDir(QCoreApplication::applicationDirPath()).filePath("nothing");
+}
+
+// This vendor's own subfolder under the shared root — matches exactly
+// what VendorManager::rootDir()/"nothing-browser" resolves to once
+// NOTHINGMOVIES_VENDOR_ROOT is set to vendorRootPath() (see main.cpp).
+// One owner (VendorManager), one path — this just has to agree with it.
+static QString vendorDirPath() {
+    return QDir(vendorRootPath()).filePath("nothing-browser");
 }
 
 static QString vendoredBinaryPath() {
@@ -35,7 +51,7 @@ static QString vendoredBinaryPath() {
 #endif
 }
 
-// Prefer our own vendored copy (what vendor_updater manages) so version is
+// Prefer our own vendored copy (what VendorManager manages) so version is
 // predictable, but fall back to a system install (apt/deb put it on PATH,
 // not next to our binary) if we don't have one vendored yet.
 static QString daemonBinaryPathImpl() {
@@ -170,13 +186,27 @@ bool NothingBrowser::start(const QString& host, quint16 port, const QString& key
     m_intentionalShutdown = false;
 
     if (!m_vendorUpdater) {
-        m_vendorUpdater = std::make_unique<vendor_updater::VendorUpdater>(
-            "BunElysiaReact/nothing-browser",
-            vendorDirPath().toStdString(),
-            platformTag()
-        );
+        vendor_updater::VendorSpec spec;
+        spec.name             = "nothing-browser";
+        spec.sourceRepoUrl    = "https://github.com/ernest-tech-house-co-operation/nothing-browser";
+        spec.releaseRepo      = "BunElysiaReact/nothing-browser";
+        spec.platformTag      = platformTag();
+        spec.assetMustContain = {"headless"}; // full GUI, headful, and headless builds
+                                               // share the same platform suffix - this
+                                               // disambiguates which one we actually want
+        spec.license           = "MIT"; // TODO: confirm against the actual upstream license
 
-        if (!isAvailable()) {
+        auto& manager = vendor_updater::VendorManager::instance();
+        // Safe to call every start() — VendorManager rejects a duplicate
+        // name without touching the existing registration, so this is a
+        // harmless no-op on the 2nd+ call in a given process lifetime.
+        manager.registerVendor(spec);
+        m_vendorUpdater = manager.getUpdater(spec.name);
+
+        if (!m_vendorUpdater) {
+            std::cerr << "[scraper_core] failed to register nothing-browser with VendorManager "
+                          "— check stderr above for the reason (e.g. missing sourceRepoUrl)\n";
+        } else if (!isAvailable()) {
             // Fresh install, nothing downloaded yet - don't rely on the
             // 6-hour background watch for this, or start()/spawnAndConnect
             // below will race a download that hasn't happened yet. Block
@@ -190,13 +220,15 @@ bool NothingBrowser::start(const QString& host, quint16 port, const QString& key
             }
         }
 
-        m_vendorUpdater->startBackgroundWatch(6 * 3600, [](vendor_updater::UpdateResult r) {
-            if (!r.error.empty()) {
-                std::cerr << "[vendor_updater] error: " << r.error << "\n";
-            } else if (r.updated) {
-                std::cout << "[vendor_updater] updated " << r.oldTag << " -> " << r.newTag << "\n";
-            }
-        });
+        if (m_vendorUpdater) {
+            m_vendorUpdater->startBackgroundWatch(6 * 3600, [](vendor_updater::UpdateResult r) {
+                if (!r.error.empty()) {
+                    std::cerr << "[vendor_updater] error: " << r.error << "\n";
+                } else if (r.updated) {
+                    std::cout << "[vendor_updater] updated " << r.oldTag << " -> " << r.newTag << "\n";
+                }
+            });
+        }
     }
 
     // 1. Try joining an already-running (possibly shared) daemon first.

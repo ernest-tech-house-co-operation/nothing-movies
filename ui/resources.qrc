@@ -13,5 +13,6 @@
         <file alias="SourcesScreen.qml">qml/SourcesScreen.qml</file>
         <file alias="ThanksScreen.qml">qml/ThanksScreen.qml</file>
         <file alias="SettingsScreen.qml">qml/SettingsScreen.qml</file>
+        <file alias="VendorsScreen.qml">qml/VendorsScreen.qml</file>
     </qresource>
 </RCC>

@@ -74,6 +74,15 @@ public:
     // updates" button). Returns an error result if the name isn't registered.
     UpdateResult checkAndUpdate(const std::string& vendorName);
 
+    // Non-owning pointer to the VendorUpdater backing a registered vendor.
+    // For callers (like NothingBrowser) that need to drive their own
+    // startup sequence — e.g. a synchronous first-fetch before spawning a
+    // process — through the SAME instance VendorManager tracks, rather
+    // than constructing a second, separately-owned one that could
+    // silently diverge (this is exactly the bug that motivated this
+    // method existing at all). Returns nullptr if name isn't registered.
+    VendorUpdater* getUpdater(const std::string& name);
+
     // Starts a background watch thread per registered vendor.
     void startAllBackgroundWatches(int intervalSeconds, std::function<void(UpdateResult)> onResult);
     void stopAll();

@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,21 +15,36 @@
 #include "ui/HomepageBridge.h"
 #include "ui/AppController.h"
 #include "ui/QueueBridge.h"
+#include "ui/VendorBridge.h"
 #include "search_aggregator/search_aggregator.h"
 #include "queue_manager/queue_manager.h"
 #include "movie_source1/movie_source1.h"
 #include "movie_source3/movie_source3.h"
 #include "movie_source2/movie_source2.h"
 #include "scraper_core/ScraperEngine.h"   // for NothingBrowser and isAvailable
+#include "vendor_updater/VendorManager.h"
 // NOTE: vendor_updater/VendorUpdater.h is intentionally NOT included here
 // anymore. scraper_core owns the entire vendor install/update lifecycle
-// for the Nothing Browser binary internally now (see NothingBrowser::start()) -
-// this file used to construct its own separate VendorUpdater pointed at a
-// different directory ("vendor/nothing-browser", relative to cwd) than the
-// one scraper_core actually checks ("<appDir>/nothing"), which silently
-// diverged and caused the binary to never be found. One owner, one path.
+// for the Nothing Browser binary internally now (see NothingBrowser::start()),
+// registering itself with vendor_updater::VendorManager instead of
+// constructing its own separate VendorUpdater. This file's only remaining
+// vendor_updater responsibility is pinning WHERE VendorManager keeps every
+// vendor's files (see setVendorRootEnv() below) — the same "one owner, one
+// path" fix as before, just one level up now that there's a shared registry.
 
 namespace {
+
+// VendorManager::rootDir() defaults to a generic per-OS user-data path,
+// but this app's established convention (see the note above, and
+// scraper_core's own vendorRootPath()) is <appDir>/nothing specifically.
+// Setting this env var, once, before ANYTHING calls registerVendor(),
+// pins every vendor (Nothing Browser and any future one) to that same
+// folder. This must run before buildSourceAggregator()/NothingBrowser::start()
+// or any other registerVendor() call — do not move this later.
+void setVendorRootEnv() {
+    const QString root = QDir(QCoreApplication::applicationDirPath()).filePath("nothing");
+    qputenv("NOTHINGMOVIES_VENDOR_ROOT", root.toUtf8());
+}
 
 std::map<std::string, std::string> parseEnvFile(const std::filesystem::path& path) {
     std::map<std::string, std::string> values;
@@ -130,6 +146,10 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Nothing Movies - We have what? Everything.\n";
 
+    // Must happen before anything registers a vendor (NothingBrowser::start()
+    // included) — see setVendorRootEnv()'s comment above.
+    setVendorRootEnv();
+
     const std::string tmdbApiKey = resolveTmdbApiKey();
     if (tmdbApiKey.empty()) {
         std::cerr << "[env] warning: TMDB_API_KEY not found (.env or process env) — "
@@ -137,8 +157,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Create and start the Nothing Browser. This now also handles fetching
-    // and keeping the vendored binary up to date internally - no separate
-    // VendorUpdater needed here.
+    // and keeping the vendored binary up to date internally, via
+    // vendor_updater::VendorManager - no separate updater needed here.
     auto browser = std::make_shared<scraper_core::NothingBrowser>();
     if (!browser->start()) {
         std::cerr << "[scraper_core] Failed to start Nothing Browser!\n";
@@ -157,8 +177,13 @@ int main(int argc, char* argv[]) {
 
     ui::AppController appController;
     ui::QueueBridge queueBridge(queueManager);
+    // Exposes every vendor registered with VendorManager (Nothing Browser,
+    // and any future tool other sources register the same way) to
+    // Settings -> External Tools in the UI.
+    ui::VendorBridge vendorBridge;
 
-    ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager, &homepageBridge);
+    ui::MainWindow window(&tmdbBridge, &searchBridge, &appController, &queueBridge, queueManager,
+                          &homepageBridge, &vendorBridge);
     window.show();
     return app.exec();
 }

@@ -114,6 +114,12 @@ UpdateResult VendorManager::checkAndUpdate(const std::string& vendorName) {
     return updater->checkAndUpdateOnce();
 }
 
+VendorUpdater* VendorManager::getUpdater(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vendors_.find(name);
+    return it != vendors_.end() ? it->second.get() : nullptr;
+}
+
 void VendorManager::startAllBackgroundWatches(int intervalSeconds, std::function<void(UpdateResult)> onResult) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [name, updater] : vendors_) {

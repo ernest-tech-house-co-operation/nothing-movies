@@ -12,34 +12,17 @@ using json = nlohmann::json;
 
 namespace vendor_updater {
 
-static size_t writeToString(void* c, size_t s, size_t n, void* out) {
+namespace {
+
+size_t writeToString(void* c, size_t s, size_t n, void* out) {
     static_cast<std::string*>(out)->append((char*)c, s * n);
     return s * n;
 }
-static size_t writeToFile(void* c, size_t s, size_t n, void* stream) {
+size_t writeToFile(void* c, size_t s, size_t n, void* stream) {
     return fwrite(c, s, n, static_cast<FILE*>(stream));
 }
 
-VendorUpdater::VendorUpdater(std::string repo, std::string vendorDir, std::string platformTag)
-    : repo_(std::move(repo)), vendorDir_(std::move(vendorDir)), platformTag_(std::move(platformTag)) {
-    fs::create_directories(vendorDir_);
-}
-
-VendorUpdater::~VendorUpdater() { stop(); }
-
-std::string VendorUpdater::readLocalTag() const {
-    std::ifstream f(vendorDir_ + "/.version");
-    std::string tag;
-    if (f) std::getline(f, tag);
-    return tag;
-}
-
-void VendorUpdater::writeLocalTag(const std::string& tag) const {
-    std::ofstream f(vendorDir_ + "/.version");
-    f << tag;
-}
-
-static bool extractZip(const std::string& archivePath, const std::string& stagingDir) {
+bool extractZip(const std::string& archivePath, const std::string& stagingDir) {
     int err = 0;
     zip_t* archive = zip_open(archivePath.c_str(), ZIP_RDONLY, &err);
     if (!archive) return false;
@@ -82,18 +65,11 @@ static bool extractZip(const std::string& archivePath, const std::string& stagin
     return true;
 }
 
-static bool extractTarGz(const std::string& archivePath, const std::string& stagingDir) {
-    // No .tar.gz support existed here before - this silently produced an
-    // empty staging dir on every Linux release (the .zip branch never
-    // matched, and the downloaded archive was deleted right after this
-    // regardless of whether extraction happened). Shell out to system
-    // `tar`, same as the project's own documented install command.
-    //
+bool extractTarGz(const std::string& archivePath, const std::string& stagingDir) {
     // --strip-components=1: GitHub release tarballs wrap their contents in
-    // a top-level folder (e.g. "nothing-browser-headless-0.2.0-linux-x86_64/").
-    // Without stripping it, the binary ends up nested one level deeper than
-    // scraper_core expects (vendorDir_/<wrapper>/nothing-browser-headless
-    // instead of vendorDir_/nothing-browser-headless), so it's never found.
+    // a top-level folder (e.g. "toolname-0.2.0-linux-x86_64/"). Without
+    // stripping it, the binary ends up nested one level deeper than the
+    // vendor dir the rest of the app expects.
     std::string cmd = "tar -xzf \"" + archivePath + "\" -C \"" + stagingDir + "\" --strip-components=1";
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
@@ -103,16 +79,64 @@ static bool extractTarGz(const std::string& archivePath, const std::string& stag
     return true;
 }
 
+// Generalized replacement for the old hardcoded "isHeadless" check — a
+// vendor spec now declares whatever required/excluded substrings it needs
+// to pick the right asset out of a release that may publish several
+// builds sharing the same platform suffix.
+bool assetMatches(const std::string& assetName, const VendorSpec& spec) {
+    if (spec.platformTag.empty() || assetName.find(spec.platformTag) == std::string::npos)
+        return false;
+
+    for (const auto& required : spec.assetMustContain) {
+        if (assetName.find(required) == std::string::npos) return false;
+    }
+    for (const auto& excluded : spec.assetMustNotContain) {
+        if (!excluded.empty() && assetName.find(excluded) != std::string::npos) return false;
+    }
+
+    bool isArchive = assetName.ends_with(".zip") || assetName.ends_with(".tar.gz");
+    return isArchive;
+}
+
+} // namespace
+
+VendorUpdater::VendorUpdater(VendorSpec spec, std::string vendorDir)
+    : spec_(std::move(spec)), vendorDir_(std::move(vendorDir)) {
+    fs::create_directories(vendorDir_);
+}
+
+VendorUpdater::~VendorUpdater() { stop(); }
+
+std::string VendorUpdater::readLocalTag() const {
+    std::ifstream f(vendorDir_ + "/.version");
+    std::string tag;
+    if (f) std::getline(f, tag);
+    return tag;
+}
+
+void VendorUpdater::writeLocalTag(const std::string& tag) const {
+    std::ofstream f(vendorDir_ + "/.version");
+    f << tag;
+}
+
+std::string VendorUpdater::resolveReleasesApiUrl() const {
+    if (!spec_.releasesApiUrl.empty()) return spec_.releasesApiUrl;
+    return "https://api.github.com/repos/" + spec_.releaseRepo + "/releases/latest";
+}
+
 UpdateResult VendorUpdater::checkAndUpdateOnce() {
-    UpdateResult result{false, readLocalTag(), "", ""};
-    std::cout << "[vendor_updater] checking " << repo_
-               << " (local tag: " << (result.oldTag.empty() ? "<none>" : result.oldTag) << ")\n";
+    UpdateResult result;
+    result.vendorName = spec_.name;
+    result.oldTag = readLocalTag();
+
+    std::cout << "[vendor_updater] [" << spec_.name << "] checking (local tag: "
+               << (result.oldTag.empty() ? "<none>" : result.oldTag) << ")\n";
 
     CURL* curl = curl_easy_init();
     std::string body;
     if (curl) {
-        std::string url = "https://api.github.com/repos/" + repo_ + "/releases/latest";
-        std::cout << "[vendor_updater] fetching release info: " << url << "\n";
+        std::string url = resolveReleasesApiUrl();
+        std::cout << "[vendor_updater] [" << spec_.name << "] fetching release info: " << url << "\n";
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
@@ -135,26 +159,18 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
 
     std::string latestTag = release.value("tag_name", "");
     result.newTag = latestTag;
-    std::cout << "[vendor_updater] latest release tag: "
+    std::cout << "[vendor_updater] [" << spec_.name << "] latest release tag: "
                << (latestTag.empty() ? "<none>" : latestTag) << "\n";
 
     if (latestTag.empty() || latestTag == result.oldTag) {
-        std::cout << "[vendor_updater] already up to date (" << result.oldTag << ") — skipping fetch\n";
+        std::cout << "[vendor_updater] [" << spec_.name << "] already up to date — skipping fetch\n";
         return result;
     }
 
     std::string assetUrl, assetName;
     for (auto& asset : release["assets"]) {
         std::string name = asset.value("name", "");
-        bool matchesPlatform = name.find(platformTag_) != std::string::npos;
-        // Full GUI, headful, and headless builds all share the same
-        // platform suffix (e.g. "-linux-x86_64.tar.gz") - platformTag_
-        // alone isn't enough to pick the right one, and the full GUI
-        // asset happens to be listed first in the release, so without
-        // this we'd silently grab the wrong binary every time.
-        bool isHeadless = name.find("headless") != std::string::npos;
-        bool isArchive = name.ends_with(".zip") || name.ends_with(".tar.gz");
-        if (matchesPlatform && isHeadless && isArchive) {
+        if (assetMatches(name, spec_)) {
             assetUrl = asset.value("browser_download_url", "");
             assetName = name;
             break;
@@ -162,11 +178,11 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
     }
 
     if (assetUrl.empty()) {
-        result.error = "No matching asset for platform: " + platformTag_;
+        result.error = "No matching asset for platform: " + spec_.platformTag;
         return result;
     }
-    std::cout << "[vendor_updater] matched asset: " << assetName << "\n";
-    std::cout << "[vendor_updater] downloading from: " << assetUrl << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] matched asset: " << assetName << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] downloading from: " << assetUrl << "\n";
 
     std::string stagingDir = vendorDir_ + "_staging";
     fs::remove_all(stagingDir);
@@ -196,19 +212,19 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
 
     std::error_code sizeEc;
     auto downloadedBytes = fs::file_size(archivePath, sizeEc);
-    std::cout << "[vendor_updater] downloaded " << archivePath
+    std::cout << "[vendor_updater] [" << spec_.name << "] downloaded " << archivePath
                << " (" << (sizeEc ? "unknown size" : std::to_string(downloadedBytes) + " bytes") << ")\n";
 
-    std::cout << "[vendor_updater] extracting " << assetName << " -> " << stagingDir << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] extracting " << assetName << " -> " << stagingDir << "\n";
     bool extracted = false;
     if (assetName.ends_with(".zip")) {
         extracted = extractZip(archivePath, stagingDir);
     } else if (assetName.ends_with(".tar.gz")) {
         extracted = extractTarGz(archivePath, stagingDir);
     }
-    std::cout << "[vendor_updater] extraction " << (extracted ? "succeeded" : "FAILED") << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] extraction " << (extracted ? "succeeded" : "FAILED") << "\n";
 
-    std::cout << "[vendor_updater] deleting downloaded archive: " << archivePath << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] deleting downloaded archive: " << archivePath << "\n";
     fs::remove(archivePath);
 
     if (!extracted) {
@@ -217,17 +233,15 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
         return result;
     }
 
-    // Sanity check: staging dir should actually have something in it now,
-    // not just be an empty folder that gets happily swapped into place.
     if (fs::is_empty(stagingDir)) {
         result.error = "Extraction produced no files: " + assetName;
-        std::cout << "[vendor_updater] staging dir is empty after extraction — aborting swap\n";
+        std::cout << "[vendor_updater] [" << spec_.name << "] staging dir is empty after extraction — aborting swap\n";
         fs::remove_all(stagingDir);
         return result;
     }
 
     std::string backupDir = vendorDir_ + "_prev";
-    std::cout << "[vendor_updater] placing " << stagingDir << " -> " << vendorDir_ << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] placing " << stagingDir << " -> " << vendorDir_ << "\n";
     fs::remove_all(backupDir);
     if (fs::exists(vendorDir_)) fs::rename(vendorDir_, backupDir);
     fs::rename(stagingDir, vendorDir_);
@@ -235,7 +249,7 @@ UpdateResult VendorUpdater::checkAndUpdateOnce() {
     writeLocalTag(latestTag);
     fs::remove_all(backupDir);
 
-    std::cout << "[vendor_updater] done — now at " << latestTag << "\n";
+    std::cout << "[vendor_updater] [" << spec_.name << "] done — now at " << latestTag << "\n";
     result.updated = true;
     return result;
 }
@@ -256,4 +270,4 @@ void VendorUpdater::stop() {
     if (worker_.joinable()) worker_.join();
 }
 
-}
+} // namespace vendor_updater

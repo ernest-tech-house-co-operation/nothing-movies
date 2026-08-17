@@ -68,7 +68,8 @@ Item {
                             { label: "Downloads", icon: "⬇" },
                             { label: "Sources",   icon: "🔌" },
                             { label: "Thanks",    icon: "💜" },
-                            { label: "Settings",  icon: "⚙" }
+                            { label: "Settings",  icon: "⚙" },
+                            { label: "Vendors",   icon: "🧰" }
                         ]
                         delegate: NavItem {
                             label: modelData.label
@@ -148,6 +149,9 @@ Item {
             SettingsScreen {
                 onOpenThanksRequested: contentStack.currentIndex = 4
             }
+
+            // ── Vendors / External Tools (index 6) ──
+            VendorsScreen {}
         }
     }
 }
