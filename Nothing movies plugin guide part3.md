@@ -6,21 +6,30 @@
 
 ---
 
-## The rule: Nothing Browser is the only scraping engine
+## The rules — read this section first
 
-All movie sources that need to scrape a website **must use Nothing Browser**
-and no other tool. No Playwright, no Puppeteer, no Python Selenium, no
-headless Chrome wrappers of any kind.
-
-**Why:** one engine means one thing to maintain. When something about the
-underlying binary or protocol changes, the fix goes into `scraper_core`
-once and every source benefits automatically. If everyone used a different
-tool, every source would break independently and need separate fixes.
-
-**Do not write or ship any JS/TS/Python in your source module.** Everything
-your source needs to do should be reachable through the `scraper_core` API
-below. If it isn't, that's a gap in `scraper_core` — raise it, don't work
-around it with a second tool.
+1. **Nothing Browser is the only scraping engine.** No Playwright, no
+   Puppeteer, no Python Selenium, no headless Chrome wrapper of any kind,
+   and no JS/TS/Python shipped in your source module. Everything your
+   source needs should be reachable through the `scraper_core` API below;
+   if it isn't, that's a gap in `scraper_core` to raise, not something to
+   route around with a second tool.
+2. **`scraper_core::isAvailable()` must be checked in your source's
+   `init()`**, and your source must fail gracefully (not crash) if it
+   returns `false`.
+3. **Never assume where the Nothing Browser binary lives.** That's
+   `scraper_core`'s and `VendorManager`'s job. Your source just calls
+   `isAvailable()` and `sendRaw()` — it never constructs its own path to
+   the binary.
+4. **Any external binary dependency your source needs — Nothing Browser
+   or anything else — goes through `vendor_updater::VendorManager::registerVendor()`.**
+   Never write your own download/extract logic and never construct a
+   `VendorUpdater` directly. Full detail, plus why this rule exists, is
+   in Part 4 §0 and §2.
+5. **`VendorSpec::sourceRepoUrl` is mandatory** for anything you register.
+   No exceptions, no override.
+6. **Handle `daemonRecovered` if your source holds long-lived tab state.**
+   A recovered daemon means every tabId you were holding is now invalid.
 
 ---
 
@@ -152,6 +161,9 @@ opinion on any of it.
 ## External dependency rules
 
 Nothing Browser binary is **never bundled in the Nothing Movies app binary**.
+It's downloaded on demand and kept up to date by `vendor_updater`, the same
+mechanism described in full in **Part 4** — the rest of this section
+covers what your source needs to do to hook into it.
 
 - **Windows:** the Nothing Movies installer handles downloading and installing
   Nothing Browser. The installer checks for it and fetches it if missing.
@@ -159,14 +171,88 @@ Nothing Browser binary is **never bundled in the Nothing Movies app binary**.
   ```bash
   curl -L https://github.com/BunElysiaReact/nothing-browser/releases/latest/download/nothing-browser-linux-x86_64.tar.gz | tar -xz -C ~/.local/bin
   ```
-- **Auto-update:** `vendor_updater` keeps the Nothing Browser binary current.
-  Wire your source's vendor target the same way `scraper_core` does — point
-  it at the Nothing Browser GitHub releases and let the updater handle the
-  rest.
+- **Auto-update:** `vendor_updater` keeps every registered external tool —
+  Nothing Browser included — current. See the next section for how a
+  source registers its own dependency with it.
 
 Your source's `init()` should verify Nothing Browser exists before
 attempting to use it, and fail gracefully with a clear error if it doesn't
 (see the `isAvailable()` example above).
+
+---
+
+## Registering your source's external dependency with `VendorManager`
+
+If your source depends on an external binary (Nothing Browser or anything
+else), you don't manage its download, storage location, or update checks
+yourself. You register it once with `vendor_updater::VendorManager`, and it
+handles the rest — one registry every source plugs into, instead of every
+source inventing its own download logic.
+
+```cpp
+#include "vendor_updater/VendorManager.h"
+
+vendor_updater::VendorSpec spec;
+spec.name             = "nothing-browser";                 // becomes the folder name on disk
+spec.sourceRepoUrl     = "https://github.com/ernest-tech-house-co-operation/nothing-browser";
+spec.releaseRepo       = "BunElysiaReact/nothing-browser";  // where the actual release binaries are published
+spec.platformTag       = "linux";                            // this codebase's platformTag() returns
+                                                               // exactly "linux" or "windows" — match that,
+                                                               // don't invent a more specific string unless
+                                                               // your actual release assets use one
+spec.assetMustContain  = {"headless"};                       // disambiguate from a full GUI build
+spec.license           = "MIT";
+
+if (!vendor_updater::VendorManager::instance().registerVendor(spec)) {
+    // registration failed — check stderr for why (see below)
+}
+```
+
+Two fields are **mandatory**, and registration is refused outright if
+they're missing:
+
+- **`sourceRepoUrl`** — the tool's own open-source repository. This is
+  what lets anyone — a reviewer, a user, an auditor — go read the actual
+  code being downloaded and run, and confirm it isn't doing anything it
+  shouldn't. There is no way to register a closed-source or unverifiable
+  binary dependency; this isn't a setting you can override.
+- **`releaseRepo`** (or `releasesApiUrl`, if the tool doesn't publish
+  releases through the standard GitHub API shape) — where update checks
+  actually come from. Note this is deliberately a *separate* field from
+  `sourceRepoUrl`: most tools publish releases from the same repo as their
+  source, but some publish binaries from a separate build/dist repo, and
+  the manager needs to know which URL is for "read the code" versus
+  "check for updates."
+
+`VendorManager` also enforces where the tool ends up on disk — every
+registered vendor's files live under one shared root folder
+(`<appDir>/nothing/<name>` in this app specifically — see Part 4 §2 for
+exactly how that's pinned), never anywhere else, and `name` is validated
+to reject anything that could escape that folder (`/`, `\`, `..`).
+
+Registration is idempotent: calling `registerVendor()` again with the same
+`name` (e.g. because your module's init runs more than once) is a safe
+no-op — it's rejected without touching the existing registration, so you
+don't need to guard this call yourself.
+
+Once registered, you don't call anything else — `VendorManager` (or
+whatever part of the app starts background watches) handles checking for
+and applying updates. If you need to manually trigger a check (e.g. a
+"Check for updates" button in your own source's settings), call:
+
+```cpp
+auto result = vendor_updater::VendorManager::instance().checkAndUpdate("nothing-browser");
+if (!result.error.empty()) {
+    // handle result.error
+}
+```
+
+This call blocks and does real network I/O — never call it from a UI
+thread.
+
+Full details on `VendorSpec`, asset-matching rules, the manifest file, and
+the CMake wiring needed to actually build against `vendor_updater` are in
+**Part 4**.
 
 ---
 
@@ -205,6 +291,11 @@ add_custom_command(
     COMMENT "Copying movie_source2 data files to build directory"
 )
 ```
+
+If your source also registers a vendor dependency directly (rather than
+relying on `scraper_core` for Nothing Browser specifically), add
+`vendor_updater` to `target_link_libraries(...)` too — see Part 4 §3 for
+what breaks if you skip this.
 
 ---
 
@@ -250,15 +341,20 @@ Everything in Part 1 and Part 2 applies, plus:
 
 - [ ] Uses `scraper_core::NothingBrowser` — no other scraping tool, no JS/TS/Python in the module itself
 - [ ] `init()` checks for Nothing Browser availability and fails gracefully
-- [ ] External binary wired to `vendor_updater` — not bundled
+- [ ] Any external binary dependency registered with `VendorManager` (not bundled, not downloaded manually)
+- [ ] `VendorSpec::sourceRepoUrl` set to a real, public, open-source repository
 - [ ] Handles `daemonRecovered` sensibly if the source holds long-lived tab state
 - [ ] Nothing Browser version requirement documented in the PR
+- [ ] If you touched `CMakeLists.txt` for this: matches the checklist in Part 4 §3 (correct file casing, `Q_OBJECT` headers listed for AUTOMOC, `vendor_updater` linked if used)
 
 ---
 
 ## Part 4 preview
 
-Part 4 will cover:
+Part 4 covers:
 - Windows + Linux cross-platform build checklist for Nothing Browser sources
-- The `vendor_updater` integration in detail
+- The `VendorManager` / `vendor_updater` integration in full detail, including
+  exactly how the shared vendor root folder is pinned for this app
+- The CMake failure modes you'll hit if you skip the checklist above, and
+  how to fix each one
 - Submitting a PR with a Nothing Browser source

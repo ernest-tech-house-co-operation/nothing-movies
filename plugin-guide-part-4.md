@@ -9,6 +9,60 @@
 
 ---
 
+## 0. The rules — read this section first
+
+These are the non-negotiable constraints. Everything else in this doc is
+detail and explanation; this section is what actually gets your PR
+rejected or your build broken if skipped.
+
+1. **Nothing Browser is the only scraping engine** (Part 3). No second
+   scraping tool, ever, for any source.
+2. **Every external binary dependency — Nothing Browser or anything
+   else — goes through `vendor_updater::VendorManager::registerVendor()`.**
+   Never construct a `VendorUpdater` directly and never write your own
+   download/extract logic. A second, independently-constructed instance
+   is exactly how a vendor's files silently end up in two different
+   places on disk — this already happened once in this codebase and cost
+   a real debugging session to fix.
+3. **`VendorSpec::sourceRepoUrl` is mandatory.** Registration is flatly
+   refused without it. There is no override.
+4. **Every vendor's files live under one shared root, no exceptions:**
+   `<appDir>/nothing/<vendor name>/`. This is pinned once, at process
+   startup, by `main.cpp` setting the `NOTHINGMOVIES_VENDOR_ROOT`
+   environment variable **before** anything calls `registerVendor()` —
+   see §2 for why this matters and what breaks if it's skipped or
+   reordered.
+5. **`VendorSpec::name` may not contain `/`, `\`, or `..`.** Registration
+   is refused otherwise (this is what stops a name from escaping the
+   shared root folder).
+6. **CMake — link `vendor_updater`.** Any module (`ui`, a movie source,
+   whatever) that includes `vendor_updater/VendorManager.h` or
+   `VendorUpdater.h` must add `vendor_updater` to its own
+   `target_link_libraries(...)`. Without it you get a plain "file not
+   found" on the `#include`, even though the header exists on disk —
+   CMake didn't give the compiler an include path to it.
+7. **CMake — list `Q_OBJECT` headers explicitly if they live in a
+   different folder than their `.cpp`.** This project keeps headers in
+   `include/<module>/` and sources in `src/`. AUTOMOC's automatic
+   header-discovery assumes the header sits next to the `.cpp`; when it
+   doesn't, list the header directly in `add_library(...)`'s source list
+   (every existing bridge in `ui/CMakeLists.txt` already does this — copy
+   the pattern). Skipping this doesn't fail at configure or compile
+   time — it fails at **link** time, with a confusing
+   `undefined reference to vtable for YourClass` error, because `moc`
+   silently never ran on that header at all.
+8. **Match existing file-naming casing exactly, per module.** This
+   codebase is not consistent project-wide: `vendor_updater` uses
+   lowercase-with-underscores `.cpp` filenames (`vendor_updater.cpp`)
+   while `ui` uses PascalCase (`QueueBridge.cpp`) — except `MainWindow.cpp`,
+   which someone renamed to `main_window.cpp` in that same module. Before
+   adding a new file to any module, check what its *siblings* are
+   actually named on disk and match that, not what "seems consistent."
+   CMake source lists are exact string matches — no case-insensitive
+   fallback.
+
+---
+
 ## 1. Cross-platform build checklist
 
 Nothing Movies ships on **Windows** and **Linux**. Every source needs to
@@ -23,8 +77,7 @@ build and run correctly on both before it's merged.
       handle separators for you
 - [ ] No hardcoded `HOME`/`LOCALAPPDATA`-style paths — if you need a
       user data directory, get it the same way `VendorManager::rootDir()`
-      does (env var override → per-OS fallback), don't invent a second
-      convention
+      is pinned for this app (see §2), don't invent a second convention
 - [ ] No shelling out to platform-specific commands (`ls`, `dir`, `grep`,
       etc.) unless guarded by `#ifdef _WIN32` / `#else` with a real
       equivalent on both sides. `vendor_updater`'s use of `tar` for
@@ -48,10 +101,13 @@ build and run correctly on both before it's merged.
 ### If your source ships its own compiled dependency
 
 - [ ] The dependency builds (or is fetched as a prebuilt binary) for
-      **both** `windows-x64` and `linux-x86_64` at minimum — sources that
-      only work on one platform won't be accepted unless the target site
-      itself is platform-exclusive in some way that makes this
-      unavoidable (rare — flag it explicitly in your PR if so)
+      **both** `windows` and `linux` at minimum, matching whatever
+      `platformTag()`-equivalent your registration uses (see §2 — this
+      codebase's `platformTag()` returns exactly `"windows"` or
+      `"linux"`, not a more specific string like `"linux-x86_64"`) —
+      sources that only work on one platform won't be accepted unless
+      the target site itself is platform-exclusive in some way that
+      makes this unavoidable (rare — flag it explicitly in your PR if so)
 - [ ] Any prebuilt binary dependency goes through `VendorManager` (see
       §2) — it is never checked into the repo or bundled in the app
       binary directly, regardless of platform
@@ -92,6 +148,13 @@ extraction, and update-check logic independently. That meant:
 - every source re-solving the same problems (GitHub release parsing,
   platform-specific archive extraction, atomic swap-on-update) slightly
   differently, with slightly different bugs
+- **this actually happened in this exact codebase**: `scraper_core`
+  originally constructed its own private `VendorUpdater` pointed at
+  `<appDir>/nothing`, while a separate piece of setup code constructed a
+  second one pointed at `vendor/nothing-browser` (relative to whatever
+  the process's cwd happened to be). They silently diverged, and the
+  vendored binary was never found. `VendorManager` exists specifically
+  so there is exactly one owner of "where does this vendor's stuff live."
 
 `VendorManager` centralizes all of it into one registry with two rules
 that are not configurable per-source: everything lives under one root
@@ -118,7 +181,7 @@ struct VendorSpec {
 | `sourceRepoUrl` | **Yes** | The tool's own public, open-source repository. Registration is refused without it — no exceptions, no override flag. |
 | `releaseRepo` | Yes, unless `releasesApiUrl` is set | `"owner/repo"` — used to build `https://api.github.com/repos/<releaseRepo>/releases/latest`. |
 | `releasesApiUrl` | No | Full override for tools that don't publish via the standard GitHub releases API shape. |
-| `platformTag` | Yes | Substring that must appear in the release asset filename to match this platform, e.g. `"linux-x86_64"`, `"win-x64"`. |
+| `platformTag` | Yes | Substring that must appear in the release asset filename to match this platform. **In this codebase, use exactly `"windows"` or `"linux"`** (see `scraper_core`'s own `platformTag()` for the canonical example) — don't invent a more specific string like `"linux-x86_64"` unless your actual release assets are named that way. |
 | `assetMustContain` | No | Extra required substrings, for releases that publish multiple builds sharing a platform suffix (GUI vs. headless, etc). |
 | `assetMustNotContain` | No | Substrings that disqualify a match even if everything else fits. |
 | `license` | No | Informational only — shown in the Settings → External Tools UI. |
@@ -138,25 +201,51 @@ publishes assets in an order where this could matter, make your
 `assetMustContain`/`assetMustNotContain` specific enough that ordering
 doesn't matter — don't rely on position.
 
-### Where files actually end up
+### Where files actually end up — and how that's guaranteed
+
+`VendorManager::rootDir()` has a generic fallback baked into the class
+itself (per-OS user-data directory), **but this app does not use that
+fallback in practice.** `main.cpp` pins it explicitly, once, at startup,
+before anything registers a vendor:
+
+```cpp
+// main.cpp — must run before browser->start() or any other
+// registerVendor() call. Reordering this breaks the pin silently:
+// whichever registration happens first would fall through to
+// VendorManager's generic per-OS default instead.
+void setVendorRootEnv() {
+    const QString root = QDir(QCoreApplication::applicationDirPath()).filePath("nothing");
+    qputenv("NOTHINGMOVIES_VENDOR_ROOT", root.toUtf8());
+}
+```
+
+This makes `<appDir>/nothing` the real, load-bearing root for this app —
+not just a suggestion or a dev convenience. Every vendor's own code (like
+`scraper_core`'s `vendorDirPath()`, which computes where it expects the
+Nothing Browser binary to actually be) has to independently agree with
+this same path. If you're registering a new vendor from a new module,
+you don't need to duplicate this env-setting logic — it's already done
+once, globally, in `main.cpp` — but if your module also independently
+computes a path to check `isAvailable()`-style before the binary is
+downloaded, that computation must resolve to the *same* place
+`VendorManager` will actually put it: `<appDir>/nothing/<your vendor
+name>/`.
+
+Concretely, for `nothing-browser`:
 
 ```
-<rootDir()>/
-├── manifest.json                 # every registered vendor's declared metadata
-├── nothing-browser/               # spec.name — the live, in-use install
-│   └── .version                   # last-applied release tag
-├── nothing-browser_staging/        # transient — extraction happens here first
-└── nothing-browser_prev/           # transient — old install, kept only during a swap
+<appDir>/nothing/
+├── manifest.json                     # every registered vendor's declared metadata
+├── nothing-browser/                   # this vendor's live, in-use install
+│   ├── .version                       # last-applied release tag
+│   └── nothing-browser-headless       # the actual binary scraper_core spawns
+├── nothing-browser_staging/            # transient — extraction happens here first
+└── nothing-browser_prev/               # transient — old install, kept only during a swap
 ```
 
-`rootDir()` itself:
-
-- Linux: `$HOME/.local/share/nothingmovies/vendor`
-- Windows: `%LOCALAPPDATA%\NothingMovies\vendor`
-- Either platform: overridable via the `NOTHINGMOVIES_VENDOR_ROOT`
-  environment variable (intended for tests and local dev, not for
-  shipping a source that assumes a custom root — don't rely on this
-  being set in production)
+If you register a second vendor tool from a different module, it lands
+as a sibling: `<appDir>/nothing/<that vendor's name>/`, same root,
+different subfolder — never anywhere else.
 
 The `_staging` and `_prev` suffixes are transient and only exist mid-update:
 a new version is fully downloaded and extracted into `_staging` first;
@@ -178,7 +267,7 @@ array of every currently-registered vendor's declared metadata:
     "sourceRepoUrl": "https://github.com/ernest-tech-house-co-operation/nothing-browser",
     "releaseRepo": "BunElysiaReact/nothing-browser",
     "releasesApiUrl": "",
-    "platformTag": "linux-x86_64",
+    "platformTag": "linux",
     "license": "MIT"
   }
 ]
@@ -187,6 +276,15 @@ array of every currently-registered vendor's declared metadata:
 This exists specifically so the "what's actually running on my machine"
 question has an answer that doesn't require opening the app — anyone can
 read this file directly.
+
+### Registering is idempotent — call it freely
+
+`registerVendor()` is safe to call every time your module initializes,
+even across multiple app runs or multiple code paths that might both try
+to set up the same vendor. A duplicate `name` is simply rejected (logged,
+not fatal) without touching the existing registration. You don't need to
+guard calls with your own "have I already registered this" check —
+`VendorManager` already does that for you.
 
 ### Manual update checks and the UI
 
@@ -233,12 +331,59 @@ instantly on every release.
 
 ---
 
-## 3. Submitting a PR with a Nothing Browser source
+## 3. CMake integration — the part that actually breaks builds
+
+This section exists because every single build error hit while wiring
+`VendorManager` into this codebase for real was a CMake/build-system
+issue, not a logic bug. If your source registers a vendor dependency
+(or adds any new `QObject`-derived bridge class), expect to hit these
+same three failure modes if you skip this checklist:
+
+1. **`#include "vendor_updater/VendorManager.h"` fails to find the file**,
+   even though it exists on disk exactly where the compiler says it's
+   looking. Fix: add `vendor_updater` to your module's
+   `target_link_libraries(...)`. Header search paths in this project
+   come from `target_include_directories(vendor_updater PUBLIC include)`
+   inside `vendor_updater`'s own `CMakeLists.txt` — but that only
+   propagates to modules that actually link against `vendor_updater`.
+2. **`CMake Error ... Cannot find source file: src/whatever.cpp`** at
+   the *configure* step (before any compilation happens). This is a
+   filename/casing mismatch between what's on disk and what
+   `add_library(...)` lists — check both against each other character
+   by character. This project mixes casing conventions between modules
+   (see rule 8 in §0); don't assume a class's `.cpp` matches its
+   `.h`'s casing.
+3. **`undefined reference to vtable for YourClass`** at the *link*
+   step (the build otherwise completes — this is the sneakiest one,
+   since it looks like everything worked until the very last step).
+   This means `moc` never ran on a header containing `Q_OBJECT`. Fix:
+   explicitly list that header in `add_library(...)`'s source list,
+   immediately next to its `.cpp` — see any existing bridge in
+   `ui/CMakeLists.txt` for the pattern to copy.
+
+### Minimal checklist for adding a new `QObject`-derived bridge to `ui`
+
+- [ ] `.cpp` added to `add_library(ui STATIC ...)`
+- [ ] Matching `.h` **also** added to the same list, right next to it
+- [ ] Filename casing on both matches what's actually on disk, not what
+      "looks right"
+- [ ] If the bridge touches `vendor_updater` types, `vendor_updater` is
+      in `ui`'s `target_link_libraries(...)`
+- [ ] Registered as a QML context property wherever the others are
+      (`MainWindow.cpp`, via `rootContext()->setContextProperty(...)`)
+- [ ] Threaded through `MainWindow`'s constructor parameter list and
+      header member list consistently — both files need the new
+      parameter, in the same position
+
+---
+
+## 4. Submitting a PR with a Nothing Browser source
 
 ### Before you open the PR
 
 - [ ] Everything in the Part 3 submission checklist
 - [ ] Everything in the §1 cross-platform checklist above
+- [ ] Everything in the §3 CMake checklist above, if you touched the build
 - [ ] If you registered a new external dependency: confirm
       `manifest.json` picks it up correctly and `sourceRepoUrl` actually
       resolves to a real, public repository (a reviewer will check this)
