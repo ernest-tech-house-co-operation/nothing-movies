@@ -9,7 +9,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets Quick Qml WebEngineWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets Quick Qml)
+if(NOT WIN32)
+	find_package(Qt6 REQUIRED COMPONENTS WebEngineWidgets)
+endif()
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 

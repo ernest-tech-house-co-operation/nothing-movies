@@ -16,7 +16,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build \
-            qt6-base-dev qt6-declarative-dev qml6-module-qtquick-controls \
+            qt6-base-dev qt6-declarative-dev qt6-webengine-dev \
+            qml6-module-qtquick-controls \
             qml6-module-qtquick-templates qml6-module-qtqml-workerscript \
             qml6-module-qtquick-layouts \
             libcurl4-openssl-dev \
@@ -50,51 +51,90 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        uses: msys2/setup-msys2@v2
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
         with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-declarative
-            mingw-w64-x86_64-qt6-tools
-            mingw-w64-x86_64-qt6-webengine
-            mingw-w64-x86_64-curl
-            mingw-w64-x86_64-libtorrent-rasterbar
-            mingw-w64-x86_64-libmpv
-            mingw-w64-x86_64-nlohmann-json
-            zip
+          version: "6.6.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: "qtwebengine qtwebchannel qtpositioning"
+          cache: true
+          dir: "C:/Qt"
+
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install vcpkg deps
+        shell: powershell
+        run: |
+          vcpkg install `
+            curl:x64-windows `
+            nlohmann-json:x64-windows `
+            libzip:x64-windows `
+            boost-all:x64-windows `
+            openssl:x64-windows `
+            libtorrent:x64-windows `
+            --triplet x64-windows
+
+      - name: Download mpv dev package
+        shell: powershell
+        run: |
+          $release = Invoke-RestMethod "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest"
+          $asset   = $release.assets | Where-Object { $_.name -like "mpv-dev-x86_64*.7z" } | Select-Object -First 1
+          Invoke-WebRequest $asset.browser_download_url -OutFile mpv-dev.7z
+          7z x mpv-dev.7z -ompv-dev -y
+          echo "MPV_DIR=${{ github.workspace }}\mpv-dev" >> $env:GITHUB_ENV
+
+      - name: Find Qt cmake dir
+        shell: powershell
+        run: |
+          $cmakeDir = Get-ChildItem "C:\Qt" -Recurse -Filter "Qt6Config.cmake" |
+                      Select-Object -First 1 -ExpandProperty DirectoryName
+          echo "QT_CMAKE_DIR=$cmakeDir" >> $env:GITHUB_ENV
+          $qtRoot = Split-Path (Split-Path (Split-Path $cmakeDir))
+          echo "QT_ROOT=$qtRoot" >> $env:GITHUB_ENV
 
       - name: Configure
-        run: >
-          cmake -B build -GNinja
-          -DCMAKE_BUILD_TYPE=Release
-          -DTMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
+        shell: cmd
+        run: |
+          cmake -B build-win -GNinja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_PREFIX_PATH="%QT_CMAKE_DIR%" ^
+            -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -Dmpv_DIR="%MPV_DIR%" ^
+            -DTMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build-win
 
       - name: Package
+        shell: powershell
         run: |
-          mkdir -p dist/nothingmovies-v0.0.1-windows
-          cp build/app/nothingmovies.exe dist/nothingmovies-v0.0.1-windows/
-          windeployqt --release --no-translations \
-            dist/nothingmovies-v0.0.1-windows/nothingmovies.exe
-          cd dist
-          zip -r nothingmovies-v0.0.1-windows.zip nothingmovies-v0.0.1-windows
+          $outDir = "dist\nothingmovies-v0.0.1-windows"
+          New-Item -ItemType Directory -Force $outDir
+          Copy-Item "build-win\app\nothingmovies.exe" "$outDir\"
+          Copy-Item "$env:MPV_DIR\mpv-2.dll" "$outDir\" -ErrorAction SilentlyContinue
+          $wdqt = Get-ChildItem "C:\Qt" -Recurse -Filter "windeployqt.exe" |
+                  Select-Object -First 1 -ExpandProperty FullName
+          & $wdqt --release --no-translations "$outDir\nothingmovies.exe"
+          @("QtWebEngineProcess.exe","resources","translations\qtwebengine_locales") | ForEach-Object {
+            $src = Join-Path $env:QT_ROOT $_
+            if (Test-Path $src) { Copy-Item -Recurse -Force $src "$outDir\" }
+          }
+          Compress-Archive -Path "$outDir\*" -DestinationPath "dist\nothingmovies-v0.0.1-windows.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: nothingmovies-windows
-          path: dist/nothingmovies-v0.0.1-windows.zip
+          path: dist\nothingmovies-v0.0.1-windows.zip

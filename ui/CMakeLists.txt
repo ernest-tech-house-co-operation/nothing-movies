@@ -57,4 +57,6 @@ target_link_libraries(ui PUBLIC
     queue_manager
 )
 
-target_link_libraries(ui PRIVATE Qt6::WebEngineWidgets)
+if(NOT WIN32)
+    target_link_libraries(ui PRIVATE Qt6::WebEngineWidgets)
+endif()

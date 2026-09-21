@@ -1,9 +1,11 @@
 #include "ui/StreamEmbedWidget.h"
+#ifndef Q_OS_WIN
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
 #include <QWebEngineUrlRequestInterceptor>
 #include <QWebEngineSettings>
+#endif
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -11,6 +13,7 @@
 #include <QUrl>
 #include <QStringList>
 
+#ifndef Q_OS_WIN
 class AdBlockInterceptor : public QWebEngineUrlRequestInterceptor {
 public:
     explicit AdBlockInterceptor(QObject* parent = nullptr)
@@ -34,6 +37,7 @@ public:
         }
     }
 };
+#endif
 
 StreamEmbedWidget::StreamEmbedWidget(QWidget* parent)
     : QWidget(parent)
@@ -67,6 +71,7 @@ StreamEmbedWidget::StreamEmbedWidget(QWidget* parent)
     tl->addWidget(titleLabel_, 1);
     root->addWidget(topBar);
 
+#ifndef Q_OS_WIN
     auto* profile = new QWebEngineProfile("StreamEmbed", this);
     auto* interceptor = new AdBlockInterceptor(this);
     profile->setUrlRequestInterceptor(interceptor);
@@ -77,14 +82,28 @@ StreamEmbedWidget::StreamEmbedWidget(QWidget* parent)
     auto* page = new QWebEnginePage(profile, view_);
     view_->setPage(page);
     root->addWidget(view_, 1);
+#else
+    auto* unavailable = new QLabel(
+        "Web embeds are unavailable on Windows. Use a direct stream or download instead.",
+        this);
+    unavailable->setAlignment(Qt::AlignCenter);
+    unavailable->setStyleSheet("color: white; font-size: 16px;");
+    root->addWidget(unavailable, 1);
+#endif
 }
 
 void StreamEmbedWidget::loadUrl(const QString& url) {
     titleLabel_->setText(url);
+#ifndef Q_OS_WIN
     view_->load(QUrl(url));
+#else
+    Q_UNUSED(url);
+#endif
 }
 
 void StreamEmbedWidget::stop() {
+#ifndef Q_OS_WIN
     view_->stop();
     view_->load(QUrl("about:blank"));
+#endif
 }
