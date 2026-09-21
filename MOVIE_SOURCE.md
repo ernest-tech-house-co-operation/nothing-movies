@@ -1,8 +1,14 @@
 # Adding a Movie Source — Guidelines & Rules
 
-Nothing Movies supports pluggable movie source modules. This document is the
-full guide for anyone wanting to build and submit one. Read all of it before
-opening a PR — most rejected submissions fail on things covered here.
+Nothing Movies supports pluggable movie source modules, but this project is
+not trying to become a dumping ground for every free movie site on the web.
+We know we use third-party sources and APIs. That is part of the app today.
+We do not want a pile of scraping-heavy, selector-based, or user-ID-driven
+integration attempts.
+
+This document is the full guide for anyone wanting to build and submit one.
+Read all of it before opening a PR — most rejected submissions fail on things
+covered here.
 
 ---
 
@@ -51,9 +57,12 @@ functional:
 - A slot isn't currently available (all 6 community slots are filled)
 - Legal, safety, or quality concerns raised during review
 - Duplicate functionality of an already-accepted source
+- The source depends on scraping, selectors, user IDs, or browser automation
+- The project simply does not want more sources at the moment
 
-Acceptance is a judgment call made by maintainers, not an automatic result of
-passing tests.
+We very much do not want a constant stream of new sources just because they
+work. Acceptance is a judgment call made by maintainers, not an automatic
+result of passing tests.
 
 ---
 
@@ -80,17 +89,26 @@ project and can put users at risk.
 
 ---
 
-## 5. No URL-based sources
+## 5. No URL-based sources, and no scraping
 
 There is **no "download from URL" option** in this app, by design. Every
 source must be a **built-in, compiled module in the binary** — not a runtime
 field where a user (or a submission) points at an arbitrary link.
 
+This project also does **not** allow scraping-based sources. No browser-driven
+page extraction, no selector-based parsing, no hidden user-ID flows, no
+"automatically click around a site until it works" pattern. We do not accept
+site scraping as part of the source model.
+
+A source must use a **clean direct API or direct URL call**. If it relies on
+selectors, page scraping, user IDs, or browser automation, it is not compatible
+with this project.
+
 This is intentional, for two reasons:
 1. **Control over quality** — every source that exists in the app has been
    reviewed and compiled in, not typed in by a user at runtime.
 2. **Control over count** — the 8-slot limit only means something if sources
-   can't be added around it via a URL field.
+   can't be added around it via a URL field or random scraping hacks.
 
 If your source requires configuration (API endpoints, etc.), those values are
 hardcoded or config-bundled at build time — never exposed as a free-text URL
@@ -113,32 +131,24 @@ justified in the PR).
 
 ## 7. If your source needs additional tools
 
-Some sources may need an extra binary or tool beyond core dependencies (e.g.
-a headless browser, a specific parser, a CLI tool). If so:
+Some sources may need an extra binary or tool beyond core dependencies, but
+this project is not looking for a runtime browser or scraper stack. If a source
+needs a tool, it must be a clean, direct dependency that does not turn the app
+into a browser-based scraping platform.
 
 1. **Do not bundle the binary directly in your PR.** Repos should stay light.
-2. **Wire it into the existing `vendor_updater` plugable system.** Your
-   source module should register a new vendor target (repo, platform tag,
-   destination folder) the same way `scraper_core` does for Nothing Browser.
-3. **Define the fetch link/repo, not a hardcoded copy.** The auto-updater
-   checks defined release links/repos on an interval and keeps the tool
-   current — same pattern already used for the Nothing Browser dependency.
+2. **Keep the dependency external and minimal.** If a tool is required, it
+   should be a stable component with a clear release path, not a browser-based
+   scraping system that has to chase anti-bot protections forever.
+3. **Do not introduce browser automation or runtime scraping.** If the only
+   way to support the source is to run a browser at runtime, the source is not
+   compatible with this project.
 4. Your module's `init()` should verify the tool exists and is the expected
    version before attempting to use it, and fail gracefully with a clear
    error if it doesn't.
 
-Example shape (matches the existing `vendor_updater` pattern):
-
-```cpp
-vendor_updater::VendorUpdater updater(
-    "yourtool/yourtool-repo",      // GitHub repo for your tool
-    "vendor/yourtool",             // where it lands locally
-    platformTag                    // "windows" or "linux"
-);
-```
-
-If your source needs a tool that has no public releases to auto-update from,
-that's a strong signal it's not ready for submission yet.
+If a source depends on a constantly rotating browser or page-scraping layer,
+that is a strong signal it is not ready for submission.
 
 ---
 

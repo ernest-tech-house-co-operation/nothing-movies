@@ -5,38 +5,80 @@ import QtQuick.Layouts 1.15
 Item {
     id: shell
 
-    RowLayout {
+    Rectangle {
+        anchors.fill: parent
+        color: "#0b0b12"
+    }
+
+    ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
+        // Top navigation bar
         Rectangle {
-            Layout.preferredWidth: 90
-            Layout.fillHeight: true
-            color: "#151515"
-
-            ColumnLayout {
+            id: topBar
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "#1a1030" }
+                GradientStop { position: 1.0; color: "#0f1230" }
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: "#2a2450"
+            }
+            RowLayout {
                 anchors.fill: parent
-                anchors.topMargin: 20
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
                 spacing: 24
 
-                Repeater {
-                    model: [
-                        { label: "Home",      icon: "🏠" },
-                        { label: "Search",    icon: "🔍" },
-                        { label: "Downloads", icon: "⬇" },
-                        { label: "Player",    icon: "▶" },
-                        { label: "Sources",   icon: "🔌" },
-                        { label: "Settings",  icon: "⚙" }
-                    ]
-                    delegate: NavItem {
-                        Layout.alignment: Qt.AlignHCenter
-                        label: modelData.label
-                        icon: modelData.icon
-                        selected: contentStack.currentIndex === index
-                        onClicked: contentStack.currentIndex = index
+                Text {
+                    text: "Nothing Movies"
+                    color: "white"
+                    font.pixelSize: 18
+                    font.bold: true
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.bottom
+                        anchors.topMargin: 2
+                        height: 2
+                        radius: 1
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "#7c3aed" }
+                            GradientStop { position: 1.0; color: "#06b6d4" }
+                        }
                     }
                 }
-                Item { Layout.fillHeight: true }
+
+                Item { Layout.fillWidth: true }
+
+                Row {
+                    spacing: 8
+                    Repeater {
+                        model: [
+                            { label: "Home",      icon: "🏠" },
+                            { label: "Search",    icon: "🔍" },
+                            { label: "Downloads", icon: "⬇" },
+                            { label: "Sources",   icon: "🔌" },
+                            { label: "Thanks",    icon: "💜" },
+                            { label: "Settings",  icon: "⚙" },
+                            { label: "Vendors",   icon: "🧰" }
+                        ]
+                        delegate: NavItem {
+                            label: modelData.label
+                            icon: modelData.icon
+                            selected: contentStack.currentIndex === index
+                            onClicked: contentStack.currentIndex = index
+                        }
+                    }
+                }
             }
         }
 
@@ -46,12 +88,70 @@ Item {
             Layout.fillHeight: true
             currentIndex: 0
 
-            HomeScreen {}
-            SearchScreen {}
+            // ── Home (index 0) ──
+            Item {
+                id: homeSection
+                StackView {
+                    id: homeStack
+                    anchors.fill: parent
+                    initialItem: homeScreenComponent
+                }
+                Component {
+                    id: homeScreenComponent
+                    HomeScreen {
+                        onInfoRequested: (info) => {
+                            homeStack.push(homeInfoScreenComponent, { result: info })
+                        }
+                    }
+                }
+                Component {
+                    id: homeInfoScreenComponent
+                    InfoScreen {
+                        onBackRequested: homeStack.pop()
+                    }
+                }
+            }
+
+            // ── Search (index 1) ──
+            Item {
+                id: searchSection
+                StackView {
+                    id: searchStack
+                    anchors.fill: parent
+                    initialItem: searchScreenComponent
+                }
+                Component {
+                    id: searchScreenComponent
+                    SearchScreen {
+                        onResultSelected: (result) => {
+                            searchStack.push(infoScreenComponent, { result: result })
+                        }
+                    }
+                }
+                Component {
+                    id: infoScreenComponent
+                    InfoScreen {
+                        onBackRequested: searchStack.pop()
+                    }
+                }
+            }
+
+            // ── Downloads (index 2) ──
             DownloadsScreen {}
-            PlayerScreen {}
+
+            // ── Sources (index 3) ──
             SourcesScreen {}
-            SettingsScreen {}
+
+            // ── Thanks (index 4) ──
+            ThanksScreen {}
+
+            // ── Settings (index 5) ──
+            SettingsScreen {
+                onOpenThanksRequested: contentStack.currentIndex = 4
+            }
+
+            // ── Vendors / External Tools (index 6) ──
+            VendorsScreen {}
         }
     }
 }

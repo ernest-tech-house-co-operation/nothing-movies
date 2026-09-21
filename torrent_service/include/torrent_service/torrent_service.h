@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 namespace torrent_service {
 
@@ -22,8 +23,15 @@ struct TorrentStatus {
     int downloadRateKBs = 0;
     int uploadRateKBs = 0;
     int numPeers = 0;
+    int numSeeds = 0;
     std::string filePath;                             // populated once metadata resolves
     bool readyToPlay = false;                         // enough buffered for the player to open it
+};
+
+struct TorrentFileInfo {
+    int index;
+    std::string path;
+    int64_t size;
 };
 
 // Wraps a libtorrent session. Everything network/IO related happens inside
@@ -43,6 +51,11 @@ public:
     // and starts fetching metadata + downloading into savePath.
     // Returns the torrent's info-hash hex string, used as its id everywhere else.
     std::string addMagnet(const std::string& magnetUri, const std::string& savePath);
+    std::string addMagnetMetadataOnly(const std::string& magnetUri,
+                                      const std::string& savePath);
+    std::vector<TorrentFileInfo> getFiles(const std::string& id) const;
+    void startDownloadWithSelection(const std::string& id,
+                                    const std::vector<int>& selectedIndices);
 
     // Call this periodically (UI-side timer, e.g. every 500ms-1s) to pump
     // libtorrent's internal alert queue. Nothing above updates without it.

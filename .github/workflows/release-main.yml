@@ -3,6 +3,7 @@ name: Release (Official)
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -46,3 +47,54 @@ jobs:
           name: v0.0.1
           prerelease: false
           files: dist/*
+
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-declarative
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-webengine
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-libtorrent-rasterbar
+            mingw-w64-x86_64-libmpv
+            mingw-w64-x86_64-nlohmann-json
+            zip
+
+      - name: Configure
+        run: >
+          cmake -B build -GNinja
+          -DCMAKE_BUILD_TYPE=Release
+          -DTMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: |
+          mkdir -p dist/nothingmovies-v0.0.1-windows
+          cp build/app/nothingmovies.exe dist/nothingmovies-v0.0.1-windows/
+          windeployqt --release --no-translations \
+            dist/nothingmovies-v0.0.1-windows/nothingmovies.exe
+          cd dist
+          zip -r nothingmovies-v0.0.1-windows.zip nothingmovies-v0.0.1-windows
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nothingmovies-windows
+          path: dist/nothingmovies-v0.0.1-windows.zip

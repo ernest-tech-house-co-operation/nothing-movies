@@ -4,8 +4,9 @@
 namespace search_aggregator {
 
 void SearchAggregatorModule::registerSource(const std::string& name,
-                                             std::shared_ptr<core::ISourceProvider> provider) {
-    sources_.push_back(SourceEntry{name, std::move(provider), true});
+                                             std::shared_ptr<core::ISourceProvider> provider,
+                                             bool loadImages) {
+    sources_.push_back(SourceEntry{name, std::move(provider), true, loadImages});
 }
 
 void SearchAggregatorModule::setSourceEnabled(const std::string& name, bool enabled) {
@@ -22,6 +23,22 @@ bool SearchAggregatorModule::isSourceEnabled(const std::string& name) const {
         if (entry.name == name) return entry.enabled;
     }
     return false;
+}
+
+void SearchAggregatorModule::setSourceImages(const std::string& name, bool loadImages) {
+    for (auto& entry : sources_) {
+        if (entry.name == name) {
+            entry.loadImages = loadImages;
+            return;
+        }
+    }
+}
+
+bool SearchAggregatorModule::isSourceImagesEnabled(const std::string& name) const {
+    for (const auto& entry : sources_) {
+        if (entry.name == name) return entry.loadImages;
+    }
+    return true; // unknown source -- default to the safe/full-featured path
 }
 
 std::vector<std::string> SearchAggregatorModule::listSourceNames() const {
@@ -50,6 +67,24 @@ std::vector<core::MediaResult> SearchAggregatorModule::searchAll(const std::stri
     return merged;
 }
 
+std::vector<core::MediaResult> SearchAggregatorModule::searchAllTV(const std::string& query) const {
+    std::vector<core::MediaResult> merged;
+
+    for (const auto& entry : sources_) {
+        if (!entry.enabled || !entry.provider) continue;
+
+        try {
+            std::vector<core::MediaResult> results = entry.provider->searchTV(query);
+            merged.insert(merged.end(), results.begin(), results.end());
+        } catch (const std::exception& e) {
+            std::cerr << "[search_aggregator] source '" << entry.name
+                      << "' TV search failed: " << e.what() << std::endl;
+        }
+    }
+
+    return merged;
+}
+
 std::string SearchAggregatorModule::getStreamUrl(const core::MediaResult& result) const {
     for (const auto& entry : sources_) {
         if (entry.name == result.sourceName && entry.provider) {
@@ -57,6 +92,11 @@ std::string SearchAggregatorModule::getStreamUrl(const core::MediaResult& result
         }
     }
     return "";
+}
+
+// NEW implementation
+std::vector<SourceEntry> SearchAggregatorModule::getAllSources() const {
+    return sources_;
 }
 
 } // namespace search_aggregator

@@ -1,0 +1,26 @@
+{
+  "name": "Rivestream",
+  "version": "1.0.0",
+  "profilePicture": "",
+  "hasHomepage": false,
+  "hasPoster": false,
+  "hasRating": false,
+  "hasSubtitles": true,
+  "hasDownload": false,
+  "hasStream": true,
+  "streamType": "http",
+  "downloadType": "",
+  "hasInfo": false,
+  "info": {
+    "hasMovie": true,
+    "hasSeries": false,
+    "hasYear": false,
+    "hasRating": false,
+    "hasCast": false,
+    "hasSynopsis": false,
+    "hasTrailer": false,
+    "hasQuality": true,
+    "hasLength": false,
+    "hasSubtitles": true
+  }
+}

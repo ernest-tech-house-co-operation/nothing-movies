@@ -24,6 +24,12 @@ closed, and that wastes both our time.
 
 ## 2. What kind of contribution are you making?
 
+We know this project uses third-party sources and APIs. That is not an
+invitation to add more scraping junk or random selector-based integrations.
+This project is not a general-purpose scraper farm. We do not support
+browser scraping, selector-based extraction, user-ID handshakes, or anything
+that relies on parsing a random page and hoping it still works tomorrow.
+
 ### A) Core modules (player, torrent_service, ui, downloader, etc.)
 Bug fixes, performance improvements, UI polish, feature work on existing
 modules. This is normal open-source-style contribution:
@@ -37,8 +43,11 @@ modules. This is normal open-source-style contribution:
 ### B) A new movie source
 Do not start coding yet. Go read `MOVIE_SOURCE.md` in full first — there's
 a hard 8-slot limit, 2 slots are already reserved, and not every working
-source gets accepted even if the code is clean. Sites are the usual reason
-for rejection, not code quality.
+source gets accepted even if the code is clean. We really do not want more
+sources unless there's a strong reason, and we do not want scraping-based or
+selector-driven ones. A source must use direct URL/API access. No scraping.
+No selectors. No user IDs. No browser automation. If it cannot be called as a
+clean direct request, it does not fit this project.
 
 ### C) Reporting a bug
 Open an issue. Include:
@@ -87,7 +96,38 @@ it's worth confirming the direction fits before you sink time into it.
 
 ---
 
-## 5. On ownership, once merged
+## 5. Nothing Browser is a research tool, not a shipped runtime component
+
+Nothing Browser is a scraper-first reverse-engineering browser used during the
+source-discovery phase to inspect third-party sites, capture requests, and
+export working API calls into clean direct integrations. It is basically a
+browser built for API discovery and network analysis, not a runtime scraping
+layer for the final app.
+
+It was never meant to be bundled inside Nothing Movies itself. We are not
+shipping that browser in the app, and we are not encouraging new contributions
+to rely on browser automation or browser-controlled scraping in production.
+The actual app logic is meant to call APIs directly in C++ once the endpoint is
+known.
+
+This is the workflow:
+
+1. Use Nothing Browser to inspect a site and find the underlying API
+2. Capture the request/response flow and export the working call
+3. Turn that into a clean direct integration in the app
+4. Stop relying on the browser for runtime behavior
+
+That is the correct model. We do not want a persistent browser-based source
+layer, because sites rotate, block, and change constantly. The browser is a
+research workstation used to find the API; the shipped app is the direct API
+client. If a contribution relies on runtime browser parsing, selectors,
+user-ID flows, or scraping automation, it is not aligned with the current
+policy.
+
+For context and the browser docs: https://nothing-browser-docs.pages.dev/
+---
+
+## 6. On ownership, once merged
 
 For core modules: standard open-source norms apply — you keep authorship
 credit, the code lives under the project's license going forward.
@@ -99,7 +139,7 @@ normal PR.
 
 ---
 
-## 6. Questions
+## 7. Questions
 
 Open a discussion thread rather than emailing directly for general
 questions — keeps answers visible for the next person with the same

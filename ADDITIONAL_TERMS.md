@@ -41,3 +41,6 @@ public, well-documented tools and techniques. The code is visible because
 hiding it wouldn't make it more or less legitimate — but visible doesn't mean
 free-for-profit. Read it, learn from it, contribute to it, run it for
 yourself. Just don't sell it.
+
+
+

@@ -10,6 +10,12 @@ project's main `LICENSE.md` (PolyForm Noncommercial 1.0.0) and
 `ADDITIONAL_TERMS.md`. By submitting a source module for review, and by
 having it accepted, you agree to these terms.
 
+We are not trying to become a general open-source source buffet. The project
+prefers a small number of reliable direct API/URL-backed sources over a large
+number of scraping-heavy or selector-based add-ons. This license therefore
+applies to a stricter, more selective source model than a normal permissive
+open-source project.
+
 ---
 
 ## 1. Acceptance and credit
@@ -53,6 +59,8 @@ with what actually ships.
 - Must work on both Windows and Linux
 - Must have its own git repository
 - Must not use a free-text URL input — built into the binary only
+- Must use direct API/URL access only; no scraping, selectors, user IDs, or
+  browser automation
 - Additional tools must be wired to the `vendor_updater` plugable system
 - Site must meet the acceptance criteria (torrent sites or genuinely popular
   sites — not indie/personal sites)
@@ -61,6 +69,11 @@ with what actually ships.
 
 Acceptance today does not guarantee your source stays in the app forever.
 Ernest Tech House and the Nothing Movies maintainers reserve the right to:
+
+- Decline a source even if it works, because the project does not want more
+  sources at the moment
+- Remove a source at any time if it relies on scraping, selectors, unstable
+  user-ID flows, or any technique not aligned with direct API/URL access
 
 - Remove a source at any time (site becomes unreliable, unsafe, legally
   risky, or is superseded)

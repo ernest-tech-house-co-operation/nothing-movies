@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 namespace queue_manager {
 
@@ -25,6 +26,17 @@ struct QueueItem {
     QueueItemState state = QueueItemState::Pending;
     double progress = 0.0;      // 0.0 - 1.0
     std::string filePath;       // where the finished/in-progress file lives
+    bool readyToPlay = false;   // torrents: enough buffered near the front to open in a player.
+                                 // Always true for HttpDownload once filePath is set.
+    int numPeers = 0;
+    int numSeeds = 0;
+    int downloadRateKBs = 0;
+};
+
+struct TorrentFileInfo {
+    int index;
+    std::string path;
+    int64_t size;
 };
 
 // The single place that owns "where do downloads go" and routes each item
@@ -44,6 +56,15 @@ public:
 
     // magnetUri typically comes straight from search_aggregator::getStreamUrl().
     std::string enqueueTorrent(const std::string& title, const std::string& magnetUri);
+
+    // Add a magnet in metadata-only mode. Poll getMetadata() until files arrive.
+    std::string fetchMetadata(const std::string& magnetUri);
+    std::vector<TorrentFileInfo> getMetadata(const std::string& id);
+
+    // Start downloading only the selected torrent file indices.
+    std::string enqueueWithSelection(const std::string& title,
+                                     const std::string& id,
+                                     const std::vector<int>& selectedIndices);
 
     // url is a direct HTTP file link (non-torrent sources).
     std::string enqueueHttpDownload(const std::string& title, const std::string& url);

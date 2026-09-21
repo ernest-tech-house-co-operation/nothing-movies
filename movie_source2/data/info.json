@@ -1,0 +1,30 @@
+{
+  "name": "Kflix",
+  "version": "1.0.0",
+  "profilePicture": "",
+  "hasHomepage": true,
+  "hasPoster": true,
+  "hasRating": true,
+  "hasSubtitles": false,
+  "hasDownload": false,
+  "hasStream": true,
+  "streamType": "http",
+  "downloadType": "",
+  "hasInfo": true,
+  "hasTV": true,
+  "hasTrending": true,
+  "info": {
+    "hasMovie": true,
+    "hasSeries": true,
+    "hasYear": true,
+    "hasRating": true,
+    "hasCast": true,
+    "hasSynopsis": true,
+    "hasTrailer": true,
+    "hasQuality": false,
+    "hasLength": true,
+    "hasSubtitles": false,
+    "hasSoundtrack": true,
+    "hasSimilar": true
+  }
+}

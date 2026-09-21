@@ -1,0 +1,12 @@
+{
+  "name": "nothing-movies",
+  "version": "0.0.1",
+  "description": "We have what? Everything. A cross-platform movie downloader, torrent streamer, and video player built in C++/Qt6.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ernest-tech-house-co-operation/nothing-movies.git"
+  },
+  "author": "Pease Ernest / Ernest Tech House",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "private": true
+}

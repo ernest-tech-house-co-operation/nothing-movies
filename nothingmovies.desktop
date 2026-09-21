@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Nothing Movies
+Comment=Stream and manage movies
+Exec=nothingmovies
+Icon=nothingmovies
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=nothingmovies

@@ -109,6 +109,57 @@ std::string Torrent_serviceModule::addMagnet(const std::string& magnetUri,
     return id;
 }
 
+std::string Torrent_serviceModule::addMagnetMetadataOnly(const std::string& magnetUri,
+                                                          const std::string& savePath) {
+    lt::error_code ec;
+    lt::add_torrent_params params = lt::parse_magnet_uri(magnetUri, ec);
+    if (ec) return "";
+
+    params.save_path = savePath;
+    params.flags |= lt::torrent_flags::upload_mode;
+
+    lt::torrent_handle handle = impl_->session.add_torrent(params, ec);
+    if (ec || !handle.is_valid()) return "";
+
+    const std::string id = toHex(params.info_hashes.get_best().to_string());
+    impl_->handles[id] = handle;
+    return id;
+}
+
+std::vector<TorrentFileInfo> Torrent_serviceModule::getFiles(const std::string& id) const {
+    std::vector<TorrentFileInfo> result;
+    auto it = impl_->handles.find(id);
+    if (it == impl_->handles.end() || !it->second.is_valid()) return result;
+
+    auto tf = it->second.torrent_file();
+    if (!tf) return result;
+
+    const auto& files = tf->files();
+    for (int i = 0; i < files.num_files(); ++i)
+        result.push_back({ i, files.file_path(i), files.file_size(i) });
+    return result;
+}
+
+void Torrent_serviceModule::startDownloadWithSelection(
+    const std::string& id, const std::vector<int>& selectedIndices) {
+    auto it = impl_->handles.find(id);
+    if (it == impl_->handles.end() || !it->second.is_valid()) return;
+
+    auto tf = it->second.torrent_file();
+    if (!tf) return;
+
+    std::vector<lt::download_priority_t> priorities(
+        tf->files().num_files(), lt::dont_download);
+    for (int idx : selectedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(priorities.size()))
+            priorities[idx] = lt::default_priority;
+    }
+
+    it->second.prioritize_files(priorities);
+    it->second.unset_flags(lt::torrent_flags::upload_mode);
+    it->second.set_flags(lt::torrent_flags::sequential_download);
+}
+
 void Torrent_serviceModule::update() {
     std::vector<lt::alert*> alerts;
     impl_->session.pop_alerts(&alerts);
@@ -141,6 +192,7 @@ TorrentStatus Torrent_serviceModule::getStatus(const std::string& id) const {
     out.downloadRateKBs = st.download_rate / 1000;
     out.uploadRateKBs = st.upload_rate / 1000;
     out.numPeers = st.num_peers;
+    out.numSeeds = st.num_seeds;
 
     if (st.has_metadata) {
         out.filePath = largestFilePath(handle);
